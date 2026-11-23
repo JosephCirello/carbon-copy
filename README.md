@@ -8,13 +8,23 @@ Carbon Copy is the old carbon-copy receipt book for that AI. Every money move th
 
 ## Try it
 
-- Hosted demo: _link goes here once the Render service is up_ (it runs on the PayPal stand-in: no real money, no PayPal account).
+- Hosted demo: **https://carbon-copy-ywv3.onrender.com** (it runs on the PayPal stand-in: no real money, no PayPal account). On Render's free plan the first visit after a quiet spell can take about a minute to wake.
 - On your machine, no keys needed:
+
+Windows (PowerShell):
 
 ```
 python -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements.txt
 .venv\Scripts\python.exe -m uvicorn app:app --host 127.0.0.1 --port 8091
+```
+
+macOS or Linux:
+
+```
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m uvicorn app:app --host 127.0.0.1 --port 8091
 ```
 
 Open http://127.0.0.1:8091, press *Run the day* on the Watch tab, then open the *Carbon copy* tab. *Check the book* says INTACT. *Try to change one* alters a copy of the book so it says Maya approved a payment she declined, and the check stamps it CHANGED at that receipt. The real book is never touched.
