@@ -296,41 +296,89 @@ def _different_value(v):
     return "tampered"
 
 
+def _usd(v) -> str:
+    return f"${v:,.2f}" if isinstance(v, (int, float)) and not isinstance(v, bool) else str(v)
+
+
+def _show(field: str, v) -> str:
+    if field == "amount":
+        return _usd(v)
+    return json.dumps(v, sort_keys=True, ensure_ascii=False, default=str) if isinstance(v, (dict, list)) else str(v)
+
+
+def _answered_hold(receipts: list, idx: int) -> tuple:
+    """The amount and payee of the held payment the owner action at ``idx`` answers (None when not found)."""
+    hold_id = (receipts[idx].get("event") or {}).get("hold_id")
+    for r in receipts[:idx]:
+        ev = r.get("event") or {}
+        if r.get("kind") == "verdict" and hold_id is not None and ev.get("id") == hold_id:
+            args = ev.get("args") or {}
+            return ev.get("amount"), args.get("vendor") or args.get("payee") or args.get("email")
+    return None, None
+
+
+def _owner_story(receipts: list, idx: int, before: str, after: str) -> str:
+    amount, payee = _answered_hold(receipts, idx)
+    what = "payment" if amount is None else f"{_usd(amount)} payment"
+    if payee:
+        what += f" to {payee}"
+    verb = {"approved": "APPROVED", "declined": "DECLINED"}
+    was = {"approved": "approved", "declined": "declined"}
+    return (f"We changed receipt #{idx + 1} in a copy of the book so it says Maya {verb.get(after, after)} the {what}. "
+            f"She {was.get(before, before)} it.")
+
+
 def tamper_demo(book: dict, n: int | None = None) -> dict:
     """Show the check catching a change to one receipt, without touching the real book.
 
-    Deep-copies the book, changes one value in one receipt's event — the amount if
-    there is one, else another field of the event (or the receipt's ``kind`` when
-    the event is empty) — runs :func:`verify` on the copy and returns the receipt
-    number, the field changed, the before and after values, and the result. The book
-    passed in is never modified: only the deep copy is.
+    Deep-copies the book and changes one value in one receipt's event, then runs
+    :func:`verify` on the copy. When the book holds an owner action, THAT receipt is
+    the one changed: a "declined" becomes "approved", the exact lie the book exists to
+    catch (a record edited afterwards to say the owner approved a payment she
+    declined). With no owner action it changes the amount of the latest money move,
+    else another field (or the receipt's ``kind`` when the event is empty). Returns the
+    receipt number, the field changed, the before and after values, the result and
+    ``say``, the change in plain words. The book passed in is never modified.
     """
     work = copy.deepcopy(book)
     receipts = work.get("receipts") or []
     if not receipts:
-        return {"n": None, "field": None, "before": None, "after": None, "result": verify(work)}
+        return {"n": None, "field": None, "before": None, "after": None, "say": None, "result": verify(work)}
     if n is not None:
         idx = n - 1
     else:
-        # the most recent money move, so the demo changes a real amount when one exists
-        with_amount = [i for i, r in enumerate(receipts) if "amount" in (r.get("event") or {})]
-        idx = with_amount[-1] if with_amount else len(receipts) - 1
+        owner = [i for i, r in enumerate(receipts)
+                 if r.get("kind") == "owner" and (r.get("event") or {}).get("action") in ("declined", "approved")]
+        declined = [i for i in owner if receipts[i]["event"]["action"] == "declined"]
+        if owner:
+            idx = (declined or owner)[-1]
+        else:
+            # the most recent money move, so the demo changes a real amount when one exists
+            with_amount = [i for i, r in enumerate(receipts) if "amount" in (r.get("event") or {})]
+            idx = with_amount[-1] if with_amount else len(receipts) - 1
     if idx < 0 or idx >= len(receipts):
         idx = len(receipts) - 1
     rec = receipts[idx]
     ev = rec.get("event")
-    if isinstance(ev, dict) and ev:
-        field = "amount" if "amount" in ev else next(iter(ev))
-        before = ev.get(field)
-        after = _different_value(before)
+    if isinstance(ev, dict) and rec.get("kind") == "owner" and ev.get("action") in ("declined", "approved"):
+        field, before = "action", ev["action"]
+        after = "approved" if before == "declined" else "declined"
         ev[field] = after
+        say = _owner_story(receipts, idx, before, after)
     else:
-        field = "kind"
-        before = rec.get("kind")
-        after = _different_value(before) if before is not None else "tampered"
-        rec["kind"] = after
-    return {"n": idx + 1, "field": field, "before": before, "after": after, "result": verify(work)}
-
+        if isinstance(ev, dict) and ev:
+            field = "amount" if "amount" in ev else next(iter(ev))
+            before = ev.get(field)
+            after = _different_value(before)
+            ev[field] = after
+        else:
+            field = "kind"
+            before = rec.get("kind")
+            after = _different_value(before) if before is not None else "tampered"
+            rec["kind"] = after
+        say = (f"We changed receipt #{idx + 1} from {_show(field, before)} to {_show(field, after)} "
+               f"in a copy of the book.")
+    return {"n": idx + 1, "field": field, "before": before, "after": after, "say": say, "result": verify(work)}
 
 def _plain(result: dict) -> str:
     """One line in plain words: intact with the count, or the first changed receipt."""

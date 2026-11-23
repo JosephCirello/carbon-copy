@@ -763,3 +763,47 @@ def test_the_command_line_reads_a_book_saved_with_a_byte_order_mark(tmp_path):
     assert p.read_bytes().startswith(b"\xef\xbb\xbf")
     done = _run_cli(p)
     assert done.returncode == 0 and "intact" in done.stdout
+
+
+# ---- 7.2 the change-one demo tells the real lie ------------------------------------------------
+
+def _book_with_owner_action(action: str):
+    carbon = CarbonCopy(_signer())
+    carbon.append("verdict", {"t": 1795462000.001, "id": "abc12345", "decision": "HOLD", "amount": 1836.0,
+                              "tool": "create_payout", "args": {"vendor": "Blue Ridge Finishes", "amount": 1836.0}})
+    carbon.append("owner", {"t": 1795462000.002, "type": "owner", "action": action, "hold_id": "abc12345"})
+    return carbon
+
+
+def test_tamper_demo_turns_a_declined_into_an_approved_and_says_so():
+    carbon = _book_with_owner_action("declined")
+    before = carbon.book()
+    demo = tamper_demo(before)
+    assert (demo["n"], demo["field"], demo["before"], demo["after"]) == (2, "action", "declined", "approved")
+    assert demo["say"] == ("We changed receipt #2 in a copy of the book so it says Maya APPROVED the $1,836.00 "
+                           "payment to Blue Ridge Finishes. She declined it.")
+    assert demo["result"]["intact"] is False and demo["result"]["first_bad"] == 2
+    assert carbon.book() == before and verify(carbon.book())["intact"] is True
+
+
+def test_tamper_demo_turns_an_approved_into_a_declined_when_nothing_was_declined():
+    demo = tamper_demo(_book_with_owner_action("approved").book())
+    assert demo["after"] == "declined" and "Maya DECLINED the $1,836.00 payment to Blue Ridge Finishes" in demo["say"]
+    assert demo["result"]["first_bad"] == 2
+
+
+def test_tamper_demo_without_an_owner_action_says_the_real_before_and_after():
+    carbon = CarbonCopy(_signer())
+    carbon.append("verdict", {"t": 1795462000.001, "amount": 298.0})
+    before = carbon.book()
+    demo = tamper_demo(before)
+    assert demo["say"] == "We changed receipt #1 from $298.00 to $299.00 in a copy of the book."
+    assert demo["result"]["first_bad"] == 1 and carbon.book() == before
+
+
+def test_visitors_read_carbon_copy_not_receipts():
+    root = Path(__file__).resolve().parent.parent
+    html = (root / "static" / "index.html").read_text(encoding="utf-8")
+    assert "<title>Carbon Copy</title>" in html and '<div class="name">Carbon Copy</div>' in html
+    assert "<svg" not in html.split("</header>")[0]
+    assert "PAYPAL_MODE\n        value: standin" in (root / "render.yaml").read_text(encoding="utf-8").replace("\r\n", "\n")

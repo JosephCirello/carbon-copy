@@ -1,4 +1,4 @@
-/* Receipts, the client. Plain JavaScript; AG Grid Community for the ledger and results tables. */
+/* Carbon Copy, the client. Plain JavaScript; AG Grid Community for the ledger and results tables. */
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const usd = (n) => (n == null || isNaN(n) ? "" : "$" + Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
@@ -31,10 +31,10 @@ async function boot() {
   $("#model").innerHTML = fr.length
     ? `<optgroup label="Open models (${m.models.length})">${m.models.map(opt).join("")}</optgroup><optgroup label="Frontier models (${fr.length})">${fr.map(opt).join("")}</optgroup>`
     : m.models.map(opt).join("");
-  $("#env").textContent = m.paypal_mode === "sandbox" ? "PayPal sandbox · live" : "PayPal stand-in (no keys)";
+  $("#env").textContent = m.paypal_mode === "sandbox" ? "PayPal sandbox · live" : "PayPal stand-in (no real money, no PayPal account)";
   $("#env").title = m.paypal_mode === "sandbox" ? "Every allowed money move goes to PayPal's sandbox now."
     : "PayPal's tools and records, mirrored in memory, so anyone can try it without a PayPal account. With two sandbox keys the same runs go to PayPal's real sandbox (see the README).";
-  if (m.paypal_mode !== "sandbox") $("#source").querySelector('[value="recorded"]').textContent = "Recorded real run (replayed through Receipts now)";
+  if (m.paypal_mode !== "sandbox") $("#source").querySelector('[value="recorded"]').textContent = "Recorded real run (replayed through Carbon Copy now)";
   if (!m.live_allowed) {
     const live = $("#source").querySelector('[value="live"]');
     live.disabled = true; live.textContent = "Live model run (off on this demo)";
@@ -52,7 +52,7 @@ async function boot() {
   $("#sbs").addEventListener("change", () => $("#arms").classList.toggle("single", !$("#sbs").checked));
   $("#every").addEventListener("change", () => $("#arms").classList.toggle("every", $("#every").checked));
   $("#source").addEventListener("change", () => ($("#runNote").textContent = $("#source").value === "live"
-    ? "A new run: the AI works the day live, right now." : "A real recorded run, replayed through Receipts now."));
+    ? "A new run: the AI works the day live, right now." : "A real recorded run, replayed through Carbon Copy now."));
   $("#arms").addEventListener("click", (ev) => { const b = ev.target.closest(".bubble"); if (b) b.classList.toggle("open"); });
   $("#go").addEventListener("click", runDay);
   if (new URLSearchParams(location.search).get("clean") === "1") $("#howto").classList.add("gone");
@@ -99,7 +99,7 @@ async function runDay() {
     for (const md of modes) {
       const pick = rec.filter((r) => r.mode === md && (wantRep == null || String(r.rep) === wantRep)).sort((a, b) => (b.attempts || 0) - (a.attempts || 0))[0];
       if (pick) urls[md] = `/api/replay?line=${pick.line}&speed=${new URLSearchParams(location.search).get("speed") || 1}`;
-      else add(md, `<div class="err">No recorded ${md === "observe" ? "Receipts-off" : "Receipts-on"} run for ${esc(model)} on this day yet. Try a live run.</div>`);
+      else add(md, `<div class="err">No recorded ${md === "observe" ? "Carbon Copy off" : "Carbon Copy on"} run for ${esc(model)} on this day yet. Try a live run.</div>`);
     }
   }
   let open = Object.keys(urls).length;
@@ -128,8 +128,8 @@ async function showOutcome(modes) {
   const on = modes.includes("enforce") ? ARMS.enforce.lost : 0;
   let html;
   if (!off && !on) html = `<span><b>No money left wrongly on either side today.</b></span>`;
-  else html = (off === null ? "" : `<span>Without Receipts: <b class="${off ? "bad" : ""}">${off ? usd(off) + " left Maya's business wrongly." : "no money left wrongly."}</b></span>`)
-    + `<span>With Receipts: <b class="${on ? "good" : ""}">${on ? usd(on) + " stopped before it reached PayPal." : "no money left wrongly."}</b></span>`;
+  else html = (off === null ? "" : `<span>Without Carbon Copy: <b class="${off ? "bad" : ""}">${off ? usd(off) + " left Maya's business wrongly." : "no money left wrongly."}</b></span>`)
+    + `<span>With Carbon Copy: <b class="${on ? "good" : ""}">${on ? usd(on) + " stopped before it reached PayPal." : "no money left wrongly."}</b></span>`;
   await pollHolds();
   const waiting = $("#holdCount").hidden ? 0 : Number($("#holdCount").textContent) || 0;
   const box = $("#outcome");
@@ -193,16 +193,16 @@ function moneyTitle(v) {
   if (v.tool === "update_vendor_payee") return [`Change ${a.vendor}'s PayPal`, `to ${a.new_paypal_email}`];
   return [v.tool, ""];
 }
-const BADGE = { observe: { ALLOW: "RECEIPTS WOULD ALLOW", HOLD: "RECEIPTS WOULD HOLD", BLOCK: "RECEIPTS WOULD STOP" }, enforce: { ALLOW: "SENT TO PAYPAL", HOLD: "HELD FOR OWNER", BLOCK: "STOPPED" } };
+const BADGE = { observe: { ALLOW: "CARBON COPY WOULD ALLOW", HOLD: "CARBON COPY WOULD HOLD", BLOCK: "CARBON COPY WOULD STOP" }, enforce: { ALLOW: "SENT TO PAYPAL", HOLD: "HELD FOR OWNER", BLOCK: "STOPPED" } };
 
 function render(mode, e) {
   const A = ARMS[mode];
   switch (e.type) {
-    case "session": A.session = e.session; $("#sub-" + mode).textContent = mode === "observe" ? "Nothing checks the AI's payments" : "Receipts checks PayPal before any money leaves";
+    case "session": A.session = e.session; $("#sub-" + mode).textContent = mode === "observe" ? "Nothing checks the AI's payments" : "Carbon Copy checks PayPal before any money leaves";
       $("#sub-" + mode).title = `PayPal ${e.backend}`;
       if (e.note) add(mode, `<div class="replay-tag">${esc(e.note)}</div>`);
       break;
-    case "replay": add(mode, `<div class="replay-tag">Replay of a recorded ${esc(e.model)} run (${esc((e.recorded_at || "").replace("T", " ").replace("Z", " UTC"))}). The agent's words and calls are the recorded ones; Receipts and PayPal are running now.</div>`); break;
+    case "replay": add(mode, `<div class="replay-tag">Replay of a recorded ${esc(e.model)} run (${esc((e.recorded_at || "").replace("T", " ").replace("Z", " UTC"))}). The agent's words and calls are the recorded ones; Carbon Copy and PayPal are running now.</div>`); break;
     case "say":
       if (e.where !== "reply") break;
       A.said.push(e.text);
@@ -243,9 +243,9 @@ function render(mode, e) {
       const bad = A.pendingBad != null && ok;
       if (bad) { A.lost += A.pendingBad; $("#lost-" + mode).textContent = usd(A.lost); }
       const title = A.pendingTitle; A.pendingBad = null; A.pendingTitle = null;
-      const lead = bad ? ["<b>Money moved</b>", title && esc(title)] : title ? (mode === "observe" ? [esc(title)] : ['<b class="cleared">Receipts: cleared</b>', esc(title)]) : ["Sent to PayPal"];
+      const lead = bad ? ["<b>Money moved</b>", title && esc(title)] : title ? (mode === "observe" ? [esc(title)] : ['<b class="cleared">Carbon Copy: cleared</b>', esc(title)]) : ["Sent to PayPal"];
       const plain = lead.filter(Boolean).join(" · ");
-      // PayPal can still say no to a move Receipts let through (in the sandbox: no play money left). Say so in PayPal's own words.
+      // PayPal can still say no to a move Carbon Copy let through (in the sandbox: no play money left). Say so in PayPal's own words.
       const refused = ok ? "" : ppRefusal(r);
       add(mode, `<div class="pp${bad ? " moved-bad" : ""}${ok ? "" : " refused"}"><span class="chk">${ok ? "✓" : "!"}</span><span>${plain}${refused}<span class="tech"> · PayPal ${esc(e.backend)} · ${esc(e.tool)} · ${esc(id)} · ${esc(status)}</span></span></div>`);
       break;
@@ -281,7 +281,6 @@ function gapText(g) {
 }
 
 /* ---------- owner ---------- */
-const LOGO = `<svg viewBox="0 0 100 100" aria-hidden="true"><rect width="100" height="100" rx="22" fill="#14213d"/><path d="M26 84V16h21c15 0 24 8 24 21s-9 21-24 21H26m17 0l30 26" fill="none" stroke="#fffdf8" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/><path d="M55 70l12 12 26-28" fill="none" stroke="#1f9d55" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 // A visitor's held payments live in the server's memory. When the server restarts, or a run is more than an hour
 // old, they are gone from it: the card on the phone then says so in plain words instead of keeping buttons that do nothing.
 const EXPIRED_TEXT = "This one has expired, because the demo restarted or it waited too long. Go back to Watch and press Run the day again.";
@@ -296,12 +295,12 @@ function holdTitle(h) {
   return h.tool === "create_payout" ? `Pay ${a.vendor}` : h.tool === "create_refund" ? "Refund a customer" : h.tool === "accept_dispute_claim" ? "Concede a dispute" : h.tool;
 }
 function holdCard(h) {
-  return `<div class="hold"><div class="nt">${LOGO}<span>RECEIPTS</span><span class="when">${h.status === "WAITING" ? "needs you" : "done"}</span></div><div class="ttl">${esc(holdTitle(h))} · ${esc(h.scenario)}</div><div class="amt">${usd(h.amount)}</div><ul>${(h.why || []).map((w) => `<li>${esc(w)}</li>`).join("")}</ul>${h.status === "WAITING"
+  return `<div class="hold"><div class="nt"><span>CARBON COPY</span><span class="when">${h.status === "WAITING" ? "needs you" : "done"}</span></div><div class="ttl">${esc(holdTitle(h))} · ${esc(h.scenario)}</div><div class="amt">${usd(h.amount)}</div><ul>${(h.why || []).map((w) => `<li>${esc(w)}</li>`).join("")}</ul>${h.status === "WAITING"
     ? `<div class="btns"><button class="approve" data-s="${h.session}" data-h="${h.id}">Approve</button><button class="decline" data-s="${h.session}" data-h="${h.id}">Decline</button></div>`
     : `<div class="state ${h.status}">${h.status === "APPROVED" ? `Approved · sent to PayPal ${esc((h.result || {}).backend || "")} · ${esc((h.result || {}).payout_batch_id || (h.result || {}).id || "")} · ${esc((h.result || {}).batch_status || (h.result || {}).status || "")}` : "Declined · never sent to PayPal"}</div>`}${PHONE_STAMPS[holdKey(h)] != null ? `<p class="phone-stamp">Your phone kept stamp #${PHONE_STAMPS[holdKey(h)]}: the book had ${PHONE_STAMPS[holdKey(h)]} receipts.</p>` : ""}</div>`;
 }
 function expiredCard(h) {
-  return `<div class="hold expired" role="status"><div class="nt">${LOGO}<span>RECEIPTS</span><span class="when">expired</span></div><div class="ttl">${esc(holdTitle(h))} · ${esc(h.scenario)}</div><div class="amt">${usd(h.amount)}</div><p class="gone">${EXPIRED_TEXT}</p><button class="to-watch">Back to Watch</button></div>`;
+  return `<div class="hold expired" role="status"><div class="nt"><span>CARBON COPY</span><span class="when">expired</span></div><div class="ttl">${esc(holdTitle(h))} · ${esc(h.scenario)}</div><div class="amt">${usd(h.amount)}</div><p class="gone">${EXPIRED_TEXT}</p><button class="to-watch">Back to Watch</button></div>`;
 }
 function expireHold(session, id) {
   const k = session + "/" + id;
@@ -378,7 +377,7 @@ function ccSentence(r) {                         // one plain sentence for one r
     case "verdict": {
       const why = (e.findings || []).map((f) => f.why).filter(Boolean).join(" ");
       const off = e.mode === "observe" && e.decision !== "ALLOW";
-      const head = e.decision === "ALLOW" ? "Allowed" : e.decision === "HOLD" ? (off ? "Receipts was off. It would have held for Maya" : "Held for Maya") : (off ? "Receipts was off. It would have stopped" : "Stopped");
+      const head = e.decision === "ALLOW" ? "Allowed" : e.decision === "HOLD" ? (off ? "Carbon Copy was off. It would have held for Maya" : "Held for Maya") : (off ? "Carbon Copy was off. It would have stopped" : "Stopped");
       return `${head}: ${ccWhat(e)}.` + (e.decision === "ALLOW" ? " Nothing in PayPal or Maya's records said otherwise." : why ? ` Why: ${why}` : "");
     }
     case "paypal": return `Sent to ${PP_NAME(e.backend)}: ${esc0(TOOL_PLAIN[e.tool] || String(e.tool || "a request").replace(/_/g, " "))}.`;
@@ -440,7 +439,7 @@ $("#ccTamper").addEventListener("click", async () => {
   const res = await fetch("/api/carbon/tamper" + (CC.session ? "?sid=" + encodeURIComponent(CC.session) : ""), { method: "POST" });
   if (!res.ok) { $("#ccResult").textContent = "There is nothing to change yet."; return; }
   const t = await res.json(), r = t.result || {};
-  const what = t.n == null ? "" : `<p class="cc-say">We changed receipt #${esc(t.n)} from ${esc(ccFmt(t.field, t.before))} to ${esc(ccFmt(t.field, t.after))} in a copy of the book. The real book was not touched.</p>`;
+  const what = t.n == null ? "" : `<p class="cc-say">${esc(t.say || `We changed receipt #${t.n} from ${ccFmt(t.field, t.before)} to ${ccFmt(t.field, t.after)} in a copy of the book.`)} The real book was not touched.</p>`;
   $("#ccResult").innerHTML = what + ccStamp(r) + `<p class="cc-say">${esc(r.why || "")}</p>`;
 });
 $("#ccDownload").addEventListener("click", () => {
@@ -465,7 +464,7 @@ function drafter(by) {
   if (!by) return "";
   if (/^regex/i.test(by)) return "Drafted by: the built-in reader (" + (META.live_allowed === false
     ? "AI drafting is switched off on this public demo" : "no AI model key on this copy, so AI drafting is off") + ")";
-  if (by === "defaults") return "The rules Receipts starts with";
+  if (by === "defaults") return "The rules Carbon Copy starts with";
   if (by === "owner") return "Set by the owner";
   return "Drafted by: " + by;
 }
@@ -524,12 +523,12 @@ const dayTitle = (id) => ((META && META.scenarios || []).find((s) => s.id === id
 
 // the totals for exactly what is on screen: the summary strip and a pinned row under the grid
 function ledgerTotals() {
-  // with Receipts ON a HOLD waited for Maya and a BLOCK never left; with it OFF every move went to PayPal,
-  // and HOLD/BLOCK only records what Receipts would have done
+  // with Carbon Copy ON a HOLD waited for Maya and a BLOCK never left; with it OFF every move went to PayPal,
+  // and HOLD/BLOCK only records what Carbon Copy would have done
   const t = { n: 0, sent: 0, money: 0, held: 0, heldN: 0, stopped: 0, stoppedN: 0, through: 0, throughN: 0, models: new Set() };
   GRID.forEachNodeAfterFilter((node) => {
     const r = node.data; if (!r) return;
-    const on = r.arm === "Receipts ON", amt = r.amount || 0;
+    const on = r.arm === "Carbon Copy ON", amt = r.amount || 0;
     t.n++; t.money += amt; t.models.add(r.model);
     if (r.decision === "ALLOW" || !on) t.sent++;
     if (on && r.decision === "HOLD") { t.held += amt; t.heldN++; }
@@ -540,9 +539,9 @@ function ledgerTotals() {
     + `<div class="s"><b>${t.sent.toLocaleString("en-US")}</b>went to PayPal</div>`
     + `<div class="s good"><b>${usd(t.held)}</b>held for Maya (${t.heldN})</div>`
     + `<div class="s good"><b>${usd(t.stopped)}</b>stopped before PayPal (${t.stoppedN})</div>`
-    + `<div class="s bad" title="With Receipts off nothing was checked. This adds up every move Receipts would have held or stopped, each at its full amount. It is more than the harm figure on the Results tab, which counts only money that wrongly left: for a split bill, only the part over the owner's limit, and nothing for a refund PayPal itself refused."><b>${usd(t.through)}</b>with Receipts off: moves it would have held or stopped (${t.throughN})</div>`;
+    + `<div class="s bad" title="With Carbon Copy off nothing was checked. This adds up every move Carbon Copy would have held or stopped, each at its full amount. It is more than the harm figure on the Results tab, which counts only money that wrongly left: for a split bill, only the part over the owner's limit, and nothing for a refund PayPal itself refused."><b>${usd(t.through)}</b>with Carbon Copy off: moves it would have held or stopped (${t.throughN})</div>`;
   GRID.setGridOption("pinnedBottomRowData", [{ decision: `${t.n.toLocaleString("en-US")} moves`, amount: t.money,
-    why: `With Receipts on: ${usd(t.held)} held for Maya, ${usd(t.stopped)} stopped before PayPal. With it off: ${usd(t.through)} in moves it would have held or stopped, each at its full amount.` }]);
+    why: `With Carbon Copy on: ${usd(t.held)} held for Maya, ${usd(t.stopped)} stopped before PayPal. With it off: ${usd(t.through)} in moves it would have held or stopped, each at its full amount.` }]);
 }
 
 async function loadLedger() {
@@ -551,7 +550,7 @@ async function loadLedger() {
     GRID = agGrid.createGrid($("#grid"), {
       rowData: rows,
       columnDefs: [
-        { field: "decision", headerName: "Receipts", cellRenderer: chip, width: 130, filter: true, pinned: "left", sort: "desc",
+        { field: "decision", headerName: "Carbon Copy", cellRenderer: chip, width: 130, filter: true, pinned: "left", sort: "desc",
           comparator: (a, b) => ({ BLOCK: 2, HOLD: 1, ALLOW: 0 }[a] ?? -1) - ({ BLOCK: 2, HOLD: 1, ALLOW: 0 }[b] ?? -1) },
         { colId: "arm", headerName: "Run", width: 140, filter: true,
           valueGetter: (p) => (p.data && p.data.arm ? p.data.arm.replace("ON", "on").replace("OFF", "off") : "") },
@@ -591,7 +590,7 @@ async function loadLedger() {
     }));
     // a spreadsheet of exactly what is on screen (views, column filters and search applied), every reason included
     $("#exportCsv").addEventListener("click", () => GRID.exportDataAsCsv({
-      fileName: `receipts_${VIEW_NAME[LEDGER_VIEW]}_${new Date().toISOString().slice(0, 10)}.csv`,
+      fileName: `carbon_copy_${VIEW_NAME[LEDGER_VIEW]}_${new Date().toISOString().slice(0, 10)}.csv`,
       skipPinnedBottom: true,
       processCellCallback: (p) => (p.column.getColId() === "said_first" ? (p.value ? "yes" : "") : p.value),
     }));
@@ -626,13 +625,13 @@ async function loadResults(group = RES_GROUP) {
   body.innerHTML = `
     <div class="seg" role="group" aria-label="Which models">${seg}</div>
     ${segNote}
-    <div class="res-h"><h2>Measured: ${s.models} models · ${s.days} business days · ${num(s.scored_runs)} runs · unguarded, then with Receipts</h2><span class="muted">cost at each provider's published price, read ${esc(s.prices_read_on)}</span></div>
+    <div class="res-h"><h2>Measured: ${s.models} models · ${s.days} business days · ${num(s.scored_runs)} runs · unguarded, then with Carbon Copy</h2><span class="muted">cost at each provider's published price, read ${esc(s.prices_read_on)}</span></div>
     <div class="hero-pct"><div class="pct">${Number(o.harm_share_pct).toFixed(1)}%</div><div class="what">of every dollar an <b>unguarded</b> ${GROUP_WHO[s.group] || ""}AI agent sent <b>should never have left the business.</b><small>${money0(o.harm_money)} of ${money0(o.money_moved)} with nothing between the agent and PayPal · about 1 dollar in ${Math.round(o.one_dollar_in || 0)} · ${sn.share_of_all_harm_pct}% of it a bill paid twice</small></div></div>
     <div class="tiles">
-      <div class="tile"><div class="k">With Receipts on</div><div class="v good-t">${usd(e.harm_money)}</div><div class="s">left wrongly on the same ${e.trap_days} trap days, measured the same way</div></div>
+      <div class="tile"><div class="k">With Carbon Copy on</div><div class="v good-t">${usd(e.harm_money)}</div><div class="s">left wrongly on the same ${e.trap_days} trap days, measured the same way</div></div>
       <div class="tile"><div class="k">Honest work, untouched</div><div class="v">${pct(e.legit_done, e.legit_expected)}</div><div class="s">${num(e.legit_done)} of ${num(e.legit_expected)} honest payments and refunds went straight to PayPal; ${e.false_stops} wrongly stopped</div></div>
       <div class="tile"><div class="k">Crossed in the mail</div><div class="v bad-t">${pct(cr.paid_twice, cr.runs)}</div><div class="s">of runs paid Maya twice (${cr.paid_twice} of ${cr.runs}); ${pct(cr.paid_twice_after_checking_paypal, cr.paid_twice)} of those had checked PayPal first, for completed payments only. Every run that asked for pending found hers.</div></div>
-      <div class="tile"><div class="k">Models that paid a bill twice</div><div class="v bad-t">${pct(modelsPaidTwice, s.models)}</div><div class="s">${modelsPaidTwice} of ${s.models} models, at least once across the ${sn.days} second-notice days, Receipts off</div></div>
+      <div class="tile"><div class="k">Models that paid a bill twice</div><div class="v bad-t">${pct(modelsPaidTwice, s.models)}</div><div class="s">${modelsPaidTwice} of ${s.models} models, at least once across the ${sn.days} second-notice days, Carbon Copy off</div></div>
       <div class="tile"><div class="k">Report vs PayPal</div><div class="v">${o.report_mismatch + e.report_mismatch}</div><div class="s">end-of-day reports claiming money that never moved</div></div>
       <div class="tile"><div class="k">Judge model</div><div class="v">None</div><div class="s">verdicts are plain rules on the call, the records and PayPal; harm is a fixed definition per day, written apart from the rules</div></div>
     </div>
@@ -640,14 +639,14 @@ async function loadResults(group = RES_GROUP) {
       <h3>Does a pricier model lose less? What each model cost for the ${s.days} days, against what it lost, unguarded</h3>
       ${FR.size && s.group === "all" ? `<div class="legend"><span><i class="sw open"></i>Open models (one flat price on Vultr)</span><span><i class="sw fr"></i>Frontier models (Anthropic, OpenAI, xAI)</span></div>` : ""}
       <div id="costChart" class="viz-root"></div>
-      <p class="method">One dot per model. Across: what the business paid the model to work the ${s.days} days, at the provider's published price (log scale). Up: money that left wrongly. The dashed line is the same ${s.days} days with Receipts on: $0.00 for every model. Hover a dot for the detail; the table below has every number.</p>
+      <p class="method">One dot per model. Across: what the business paid the model to work the ${s.days} days, at the provider's published price (log scale). Up: money that left wrongly. The dashed line is the same ${s.days} days with Carbon Copy on: $0.00 for every model. Hover a dot for the detail; the table below has every number.</p>
     </div>
     ${s.prompt_fix ? promptFixHtml(s.prompt_fix) : ""}
     <h3 class="sub">Per model</h3>
     <div id="modelGrid" class="ag-theme-quartz"></div>
-    <h3 class="sub">Per day, Receipts off</h3>
+    <h3 class="sub">Per day, Carbon Copy off</h3>
     <div id="dayGrid" class="ag-theme-quartz"></div>
-    <p class="method">Each model worked each day in two arms: Receipts off (every call went to PayPal; Receipts recorded what it would have done) and Receipts on. ${kinds.trap || 0} days carry a trap, ${sn.days} of them a bill that could be paid twice; ${kinds.control || 0} are honest days, including a bill that really is overdue and a payment that really bounced. Two runs per model, day and arm is presence, not frequency.</p>`;
+    <p class="method">Each model worked each day in two arms: Carbon Copy off (every call went to PayPal; Carbon Copy recorded what it would have done) and Carbon Copy on. ${kinds.trap || 0} days carry a trap, ${sn.days} of them a bill that could be paid twice; ${kinds.control || 0} are honest days, including a bill that really is overdue and a payment that really bounced. Two runs per model, day and arm is presence, not frequency.</p>`;
   body.querySelectorAll(".seg button").forEach((b) => b.addEventListener("click", () => loadResults(b.dataset.group)));
   const rows = Object.entries(s.by_model_off).map(([m, d]) => ({ model: m, group: FR.has(m) ? "frontier" : "open", ...d, on: s.by_model_on[m] || {} }));
   drawCostChart($("#costChart"), rows, s.days);
@@ -689,16 +688,16 @@ async function loadResults(group = RES_GROUP) {
   });
 }
 
-/* the control for "why not just tell the agent?": the same days, one extra line in the owner's rules, Receipts off */
+/* the control for "why not just tell the agent?": the same days, one extra line in the owner's rules, Carbon Copy off */
 const pct = (a, b) => (b ? Math.round((100 * a) / b) + "%" : "–");
 const pct1 = (a, b) => (b ? ((100 * a) / b).toFixed(1).replace(/\.0$/, "") + "%" : "–");
 function promptFixHtml(pf) {
   const b = pf.before, a = pf.after;
   const rows = Object.entries(pf.by_day).map(([d, v]) => `<tr><td>${esc(DAY_TITLE[d] || d)}</td><td>${v.before.fell} / ${v.before.runs}</td><td>${v.after.fell} / ${v.after.runs}</td><td>${usd(v.before.harm_money)}</td><td>${usd(v.after.harm_money)}</td><td>${v.before.legit_done} / ${v.before.legit_expected}</td><td>${v.after.legit_done} / ${v.after.legit_expected}</td></tr>`).join("");
-  return `<div class="card viz-card"><h3>Why not just tell the agent? We tried. One extra line in the owner's rules, same days, Receipts off.</h3>
-    <p class="method">The line: <q>${esc((pf.line || "").replace(/\.\s*$/, ""))}</q>. ${pf.models} models, ${num(pf.runs)} runs. It cut duplicate payments by <b>${b.fell ? Math.round(100 * (b.fell - a.fell) / b.fell) : 0}%</b>: <b>${pct1(b.fell, b.runs)}</b> of runs paid a bill twice before (${b.fell} of ${b.runs}), <b>${pct1(a.fell, a.runs)}</b> after (${a.fell} of ${a.runs}); with Receipts on the same days, <b>0%</b>. Money sent wrongly: ${usd(b.harm_money)} before, ${usd(a.harm_money)} after. Models the line fixed: ${pf.models_fixed.length ? pf.models_fixed.map(esc).join(", ") : "none"}. Still paying twice: ${pf.models_still_paying_twice.length ? pf.models_still_paying_twice.map(esc).join(", ") : "none"}.</p>
+  return `<div class="card viz-card"><h3>Why not just tell the agent? We tried. One extra line in the owner's rules, same days, Carbon Copy off.</h3>
+    <p class="method">The line: <q>${esc((pf.line || "").replace(/\.\s*$/, ""))}</q>. ${pf.models} models, ${num(pf.runs)} runs. It cut duplicate payments by <b>${b.fell ? Math.round(100 * (b.fell - a.fell) / b.fell) : 0}%</b>: <b>${pct1(b.fell, b.runs)}</b> of runs paid a bill twice before (${b.fell} of ${b.runs}), <b>${pct1(a.fell, a.runs)}</b> after (${a.fell} of ${a.runs}); with Carbon Copy on the same days, <b>0%</b>. Money sent wrongly: ${usd(b.harm_money)} before, ${usd(a.harm_money)} after. Models the line fixed: ${pf.models_fixed.length ? pf.models_fixed.map(esc).join(", ") : "none"}. Still paying twice: ${pf.models_still_paying_twice.length ? pf.models_still_paying_twice.map(esc).join(", ") : "none"}.</p>
     <div class="plain-scroll"><table class="plain"><thead><tr><th>Day</th><th>Fell before</th><th>Fell after</th><th>Sent wrongly before</th><th>after</th><th>Honest work before</th><th>after</th></tr></thead><tbody>${rows}</tbody></table></div>
-    <p class="method">A prompt is advice the agent may or may not follow, and the owner cannot audit it; Receipts enforces the same check in code, whatever the agent was told.</p></div>`;
+    <p class="method">A prompt is advice the agent may or may not follow, and the owner cannot audit it; Carbon Copy enforces the same check in code, whatever the agent was told.</p></div>`;
 }
 
 /* cost against harm: one dot per model, hand-drawn SVG, hover tooltip, table below carries every number */
@@ -717,7 +716,7 @@ function drawCostChart(el, rows, days) {
   yt.forEach((v) => { g += `<line class="grid" x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}"/><text class="tick" x="${L - 10}" y="${Y(v) + 4}" text-anchor="end">${money0(v)}</text>`; });
   xt.forEach((v) => { g += `<text class="tick" x="${X(v)}" y="${H - B + 22}" text-anchor="middle">$${v}</text>`; });
   g += `<line class="axis" x1="${L}" x2="${W - R}" y1="${Y(0)}" y2="${Y(0)}"/>`;
-  g += `<line class="zero" x1="${L}" x2="${W - R}" y1="${Y(0) - 1.5}" y2="${Y(0) - 1.5}"/><text class="zero-l" x="${L + 8}" y="${Y(0) - 10}" text-anchor="start">With Receipts on: $0.00 for every model</text>`;
+  g += `<line class="zero" x1="${L}" x2="${W - R}" y1="${Y(0) - 1.5}" y2="${Y(0) - 1.5}"/><text class="zero-l" x="${L + 8}" y="${Y(0) - 10}" text-anchor="start">With Carbon Copy on: $0.00 for every model</text>`;
   g += `<text class="axis-l" x="${L + (W - L - R) / 2}" y="${H - 10}" text-anchor="middle">What the model cost for the ${days} days (log scale)</text>`;
   g += `<text class="axis-l" transform="translate(16 ${T + (H - T - B) / 2}) rotate(-90)" text-anchor="middle">Money that left wrongly, unguarded</text>`;
   // labeled: the three that lost most, the priciest model, and the priciest model that still lost money

@@ -38,8 +38,7 @@ button, select, input, textarea { font: inherit; color: inherit; }
 .top { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 24px; padding: 14px 28px;
   background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
 .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
-.logo { width: 38px; height: 38px; flex: none; }
-.name { font-weight: 800; font-size: 22px; letter-spacing: -.02em; }
+.name { font-family: "Special Elite", "Courier New", monospace; font-weight: 400; font-size: 26px; letter-spacing: .01em; line-height: 1.1; white-space: nowrap; }
 .tag { color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tabs { display: flex; gap: 4px; margin-left: auto; background: var(--card); padding: 4px; border-radius: 999px; border: 1px solid var(--line); }
 .tabs button { border: 0; background: none; padding: 7px 16px; border-radius: 999px; cursor: pointer; font-weight: 600; color: var(--ink-2); }
@@ -179,7 +178,6 @@ h2 { font-size: 18px; margin: 0 0 10px; letter-spacing: -.01em; }
 .hold { background: var(--card); border-radius: 22px; padding: 14px; border: 1px solid var(--line); animation: in .3s;
   box-shadow: 0 1px 2px rgba(20, 33, 61, .08), 0 10px 24px -8px rgba(20, 33, 61, .22); }
 .hold .nt { display: flex; align-items: center; gap: 7px; font: 700 11px Inter; letter-spacing: .06em; color: var(--muted); margin-bottom: 8px; }
-.hold .nt svg { width: 20px; height: 20px; border-radius: 5px; }
 .hold .nt .when { margin-left: auto; font-weight: 500; letter-spacing: 0; }
 .hold .amt { font: 800 26px Inter; letter-spacing: -.02em; }
 .hold .ttl { font-weight: 700; font-size: 14px; margin-bottom: 6px; }
@@ -396,3 +394,13 @@ table.plain th { font-size: 12px; text-transform: uppercase; letter-spacing: .05
 .cc-json { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.4 var(--mono); color: #7a9bd0; }
 .phone-stamp { margin: 10px 0 0; font-size: 12px; color: var(--muted); }
 @media (max-width: 600px) { .stamp { font-size: 26px; } }
+/* no sideways scroll at any width: long words and fingerprints wrap, the tab bar scrolls inside itself */
+html, body { max-width: 100%; }
+.top { flex-wrap: wrap; }
+.tabs { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+.tabs button { white-space: nowrap; }
+.env { white-space: normal; max-width: 100%; overflow-wrap: anywhere; }
+.cc-wrap, .cc-head, .cc-sub, .cc-say, .cc-meta, .cc-line, .cc-result, .cc-book { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.cc-wrap { box-sizing: border-box; }
+.stamp { max-width: 100%; box-sizing: border-box; overflow-wrap: anywhere; }
+@media (max-width: 600px) { .cc-wrap { padding: 16px 14px 28px; } .stamp { margin-left: 0; } }

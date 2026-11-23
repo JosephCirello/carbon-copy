@@ -77,7 +77,7 @@ async def lifespan(_app):
         yield
 
 
-app = FastAPI(title="Receipts", lifespan=lifespan)
+app = FastAPI(title="Carbon Copy", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=str(ROOT / "static")), name="static")
 # The rules every visitor starts from. Never changed after start-up: a visitor's own rules are a copy.
 DEFAULT_RULES = {"policy": dict(BIZ and {**DEFAULT_POLICY, **json.loads((ROOT / "scenarios" / "scenarios.json").read_text(encoding="utf-8"))["policy"]}),
@@ -278,7 +278,7 @@ def run(request: Request, scenario: str, model: str, mode: str = "enforce"):
         if not providers.key_for(prov):
             q.put({"type": "error", "msg": f"A live run needs an AI model key for {prov} ({' or '.join(providers.PROVIDERS[prov]['keys'])}), "
                                           "and this copy has none. Choose \"Recorded real run\" above: it replays real runs "
-                                          "through Receipts and PayPal now, with no keys."})
+                                          "through Carbon Copy and PayPal now, with no keys."})
             q.put({"type": "done", "outcome": {"class": "ERROR"}, "error": "no model key"})
             q.put(None)
             return
@@ -545,7 +545,7 @@ def _ledger_from(rec: dict, live: bool = False, book: CarbonCopy | None = None):
     for v in rec.get("verdicts", []):
         a = v["args"]
         rows.append({"when": rec.get("ts"), "scenario": rec["scenario"], "model": rec["model"],
-                     "arm": "Receipts ON" if rec["mode"] == "enforce" else "Receipts OFF",
+                     "arm": "Carbon Copy ON" if rec["mode"] == "enforce" else "Carbon Copy OFF",
                      "tool": v["tool"], "amount": v.get("amount"),
                      "to": a.get("receiver_email") or a.get("new_paypal_email") or a.get("capture_id") or a.get("dispute_id"),
                      "ref": a.get("invoice_number") or a.get("capture_id") or a.get("dispute_id") or a.get("vendor"),

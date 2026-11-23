@@ -27,4 +27,10 @@
   - [x] 5.3 Receipt number and fingerprint columns in the accountant's download
   - _Requirements: 6_
 
-- [ ] 6. README and Kiro write-up sections for Carbon Copy, disclosing the Receipts base
+- [x] 6. README and Kiro write-up sections for Carbon Copy, disclosing the Receipts base
+
+- [ ] 7. Polish round from a human click-through
+  - [x] 7.1 Name: "Carbon Copy" everywhere a visitor reads it; wordmark in Special Elite, no drawn logo
+  - [x] 7.2 `tamper_demo()` flips an owner "declined" to "approved" and says so in plain words, with a fallback for books with no owner action; tests for both paths
+  - [x] 7.3 No sideways scroll from 375 to 1400 pixels on every tab
+  - [x] 7.4 Hosted demo on the stand-in (`PAYPAL_MODE=standin` in `render.yaml`); badge and source line say so

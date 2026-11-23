@@ -55,7 +55,9 @@ Only when the book is intact on its own does it look at `stamps` — a list of t
 Returns `{"intact": true, "count": N}` or `{"intact": false, "count": N, "first_bad": n, "why": "<plain words>"}`.
 
 ### `tamper_demo(book, n=None) -> dict`
-Deep-copies the book, changes one value in one receipt's event (the amount if there is one), runs `verify` on the copy and returns the before/after values and the result. Never touches the real book.
+Deep-copies the book and changes one value in one receipt, runs `verify` on the copy and returns `n`, `field`, `before`, `after`, `say` (the change in plain words) and `result`. Never touches the real book.
+
+Which receipt: when the book holds an owner action, THAT receipt (the latest "declined" if there is one, else the latest "approved"). A "declined" becomes "approved": a record edited afterwards to say the owner approved a payment she declined, the lie the product exists to catch. `say` then reads "We changed receipt #N in a copy of the book so it says Maya APPROVED the $1,836.00 payment to Blue Ridge Finishes. She declined it." The amount and payee come from the earlier verdict whose `id` equals the owner action's `hold_id` (the words "payment" alone when no such verdict is found). With no owner action it falls back to the amount of the latest money move (else another field), and `say` gives the real before and after: "We changed receipt #6 from $298.00 to $299.00 in a copy of the book." An explicit `n` changes that receipt as before.
 
 ### Command line
 `python -m receipts.carbon verify path/to/book.json [--stamps path/to/stamps.json]` prints the result — *intact* with the count, or the first changed receipt in plain words — and exits 0 when intact, 1 when changed. When `--stamps` is given it loads the JSON list of the owner's phone stamps and passes them to `verify`. Files are opened as `utf-8-sig`, so a book saved with a byte-order mark (Windows PowerShell 5.1 and Notepad write one) is read too.
@@ -82,7 +84,7 @@ A *Carbon copy* tab, the sixth, after *Her book*, with the tooltip "Every move t
 
 Three buttons:
 - *Check the book* calls `POST /api/carbon/verify` and shows the stamp.
-- *Try to change one* calls `POST /api/carbon/tamper` and says in plain words what was changed in a copy ("We changed receipt #7 from $1,836.00 to $18.36 in a copy of the book"), then shows the red stamp naming that receipt.
+- *Try to change one* calls `POST /api/carbon/tamper` and shows the server's `say` sentence ("We changed receipt #7 in a copy of the book so it says Maya APPROVED the $1,836.00 payment to Blue Ridge Finishes. She declined it."), then shows the red stamp naming that receipt.
 - *Download the carbon copies* saves a JSON file with the book and the phone's stamps.
 
 On *Maya's phone*, after an approve or decline, one line: "Your phone kept stamp #N: the book had N receipts."
@@ -97,3 +99,10 @@ The accountant's download from *Her book* gains *Receipt #* and *Fingerprint* co
 - Unit tests for `tamper_demo` (it changes a copy, never the real book, and the check catches it) and for the command-line checker (it prints *intact* and exits 0, or the first changed receipt and exits 1, with and without `--stamps`).
 - Unit tests for the owner's phone stamps: a book cut back to an older signed head is *changed* when a stamp the phone holds reaches further than the receipts, and *intact* when every stamp is satisfied.
 - An integration test running one Receipts scenario on the stand-in with the book attached: the book is intact and holds one receipt per emitted event, and approving a hold returns a stamp that `verify` accepts.
+
+## Polish round (task 7)
+
+- **Name.** Every visitor-facing string says "Carbon Copy": page title, header wordmark, the phone's app name and notification header, empty states, the ledger's run labels ("Carbon Copy ON/OFF") and the CSV filename (`carbon_copy_*.csv`; the JSON download is `carbon_copies_*.json`). "Receipts" stays only where the README describes the base, and in module, class and field names. The header logo is the words "Carbon Copy" in Special Elite; the Receipts SVG logo and favicon are removed, and no drawn pictures replace them.
+- **Change-one demo.** As in `tamper_demo` above.
+- **No sideways scroll.** At every width from 375 to 1400 pixels `document.documentElement.scrollWidth` equals `window.innerWidth` on every tab. Long words and fingerprints wrap; the header wraps; only the tab bar scrolls, inside itself.
+- **Hosted demo.** `render.yaml` sets `PAYPAL_MODE=standin`. The header badge and the Carbon copy source line read "PayPal stand-in (no real money, no PayPal account)". Locally `PAYPAL_MODE=auto` is unchanged.
