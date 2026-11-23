@@ -1,4 +1,4 @@
-# Receipts: one container, the web app, the MCP endpoint and PayPal's official MCP server.
+# Carbon Copy (built on Receipts): one container, the web app, the MCP endpoint and PayPal's official MCP server.
 # Python and every library pinned to the versions the tests and the recorded runs were checked with.
 # (Claude models in live runs also need `pip install anthropic`; live runs are off in this image by default.)
 FROM python:3.13-slim
@@ -7,7 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends nodejs npm && r
 WORKDIR /app
 
 COPY requirements.txt package.json package-lock.json ./
-RUN pip install --no-cache-dir fastapi==0.162.2 uvicorn==0.54.0 openai==3.46.0 requests==2.34.2 mcp==2.3.0 pydantic==2.14.3
+RUN pip install --no-cache-dir fastapi==0.165.0 uvicorn==0.54.0 openai==3.58.0 requests==2.34.2 mcp==2.3.0 pydantic==2.14.4 cryptography==50.0.2
 # PayPal's MCP server is needed only in sandbox mode; if it fails to install, the stand-in still serves the demo
 RUN npm ci --omit=dev || echo "npm install failed: sandbox mode unavailable in this image; the stand-in works"
 

@@ -6,7 +6,7 @@
 # on PayPal's real sandbox; README "With your PayPal sandbox" runs them against yours with two keys.
 services:
   - type: web
-    name: receipts
+    name: carbon-copy
     runtime: docker
     plan: free
     healthCheckPath: /api/meta
