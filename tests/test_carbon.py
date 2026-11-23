@@ -8,10 +8,14 @@ from __future__ import annotations
 
 import base64
 import json
+import string
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from hypothesis import assume, given, settings  # noqa: E402
+import hypothesis.strategies as st  # noqa: E402
 
 from cryptography.hazmat.primitives import serialization  # noqa: E402
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey  # noqa: E402
@@ -144,13 +148,18 @@ def test_append_strips_the_events_own_t_and_rounds_its_time_to_milliseconds():
     assert rec["event"]["x"] == 1
 
 
-def test_book_carries_the_public_key_and_the_receipts():
+def test_book_carries_the_public_key_signed_head_and_receipts():
     carbon = CarbonCopy(_signer())
     carbon.append("verdict", E1)
     bk = carbon.book()
-    assert set(bk.keys()) == {"public_key", "receipts"}
+    assert set(bk.keys()) == {"public_key", "head", "receipts"}
     assert len(bk["public_key"]) == 64
     assert len(bk["receipts"]) == 1
+    # the signed head: a count, the last receipt's fingerprint, and a signature over them
+    head = bk["head"]
+    assert set(head.keys()) == {"count", "last_fp", "sig"}
+    assert head["count"] == 1
+    assert head["last_fp"] == bk["receipts"][0]["fp"]
 
 
 def test_changing_a_returned_copy_does_not_change_the_book():
@@ -246,3 +255,249 @@ def test_verify_points_at_the_first_receipt_that_fails():
     out = verify(book)
     assert out["intact"] is False
     assert out["first_bad"] == 3
+
+
+# ---- 1.5 the signed head: catching receipts removed from the end ----------------------------
+# A hash chain alone cannot show when the last receipt (or the last several) is
+# deleted, because every receipt left still links up. The book now carries a signed
+# count (the head); verify checks it after the receipts.
+
+def test_the_head_counts_the_receipts_and_names_the_last_fingerprint():
+    carbon = CarbonCopy(_signer())
+    carbon.append("verdict", E1)
+    carbon.append("paypal", E2)
+    carbon.append("owner", E3)
+    head = carbon.book()["head"]
+    recs = carbon.receipts()
+    assert head["count"] == 3
+    assert head["last_fp"] == recs[-1]["fp"]            # the last receipt's fingerprint
+
+
+def test_an_empty_book_has_a_head_counting_zero_and_linking_to_zeros():
+    carbon = CarbonCopy(_signer())
+    head = carbon.book()["head"]
+    assert head["count"] == 0
+    assert head["last_fp"] == GENESIS == "0" * 64         # no last receipt
+
+
+def test_verify_catches_the_last_receipt_removed():
+    book = _book(("verdict", E1), ("paypal", E2), ("owner", E3))
+    del book["receipts"][2]   # remove the last receipt; the two left still link up
+    out = verify(book)
+    assert out["intact"] is False
+    assert out["why"] == "receipts are missing from the end of the book"
+    assert out["first_bad"] == 3                          # the head promised three
+
+
+def test_verify_catches_the_last_several_receipts_removed():
+    book = _book(("verdict", E1), ("paypal", E2), ("owner", E3))
+    del book["receipts"][1:]   # remove receipts 2 and 3; receipt 1 still links to genesis
+    out = verify(book)
+    assert out["intact"] is False
+    assert out["why"] == "receipts are missing from the end of the book"
+    assert out["first_bad"] == 2
+
+
+def test_verify_catches_every_receipt_removed_from_the_end():
+    book = _book(("verdict", E1), ("paypal", E2), ("owner", E3))
+    del book["receipts"][:]    # cut the whole book; the head still says three
+    out = verify(book)
+    assert out["intact"] is False
+    assert out["why"] == "receipts are missing from the end of the book"
+    assert out["first_bad"] == 1
+
+
+def test_verify_reports_a_book_with_no_head():
+    book = _book(("verdict", E1), ("paypal", E2), ("owner", E3))
+    del book["head"]           # the receipts still link up, but the signed count is gone
+    out = verify(book)
+    assert out["intact"] is False
+    assert out["why"] == "the book has no signed count"
+    assert "first_bad" not in out                      # no one receipt is to blame
+
+
+def test_verify_reports_an_empty_book_with_no_head():
+    book = _book()
+    del book["head"]
+    out = verify(book)
+    assert out["intact"] is False
+    assert out["why"] == "the book has no signed count"
+
+
+def test_verify_catches_a_head_whose_signature_does_not_match():
+    book = _book(("verdict", E1), ("paypal", E2), ("owner", E3))
+    del book["receipts"][2]                       # drop the last receipt
+    book["head"]["count"] = 2                     # then lie that there were only two
+    book["head"]["last_fp"] = book["receipts"][1]["fp"]
+    out = verify(book)
+    assert out["intact"] is False
+    # the count block no longer carries a valid signature, so the forgery itself is caught
+    assert out["why"] == "the book's signed count was changed"
+
+
+def test_verify_catches_a_head_signed_by_a_different_key():
+    book = _book(("verdict", E1), ("paypal", E2), ("owner", E3))
+    head_fp = fingerprint({"count": book["head"]["count"], "last_fp": book["head"]["last_fp"]})
+    book["head"]["sig"] = _signer().sign(head_fp)   # a valid signature, but the wrong key
+    out = verify(book)
+    assert out["intact"] is False
+    assert out["why"] == "the book's signed count was changed"
+
+
+def test_verify_catches_a_head_whose_count_is_wrong_but_last_fp_honest():
+    book = _book(("verdict", E1), ("paypal", E2), ("owner", E3))
+    book["head"]["count"] = 99                      # change only the count, leave the sig
+    out = verify(book)
+    assert out["intact"] is False
+    assert out["why"] == "the book's signed count was changed"   # the sig no longer verifies
+
+
+def test_an_empty_untouched_book_is_intact():
+    book = _book()
+    assert verify(book) == {"intact": True, "count": 0}
+
+
+def test_the_head_survives_a_json_round_trip_and_still_checks_out():
+    book = _book(("verdict", E1), ("paypal", E2), ("owner", E3))
+    roundtripped = json.loads(json.dumps(book))
+    assert verify(roundtripped) == {"intact": True, "count": 3}
+    assert set(roundtripped["head"]) == {"count", "last_fp", "sig"}
+
+
+# ---- 2 property-based tests (hypothesis) -----------------------------------------------------
+# Fast enough for the on-save hook: max_examples about 100, no deadline. No network,
+# no keys on disk; every signer is generated in memory.
+
+# Events shaped like the ones Receipts emits, held as JSON values. Floats are finite
+# (no NaN/inf) and ints stay inside JSON's safe range; canonical() handles any of these.
+# "t" is left out of the top-level keys: in real use Receipts always sets "t" to the
+# time and append() reads it as the receipt's time — stripping it is covered by the
+# unit tests, so the property tests leave it out to keep the time a real number.
+KINDS = ["verdict", "paypal", "desk", "owner", "say", "report"]
+_JSON_VALUES = st.deferred(lambda: st.one_of(
+    st.none(),
+    st.booleans(),
+    st.integers(min_value=-(2 ** 53), max_value=2 ** 53),
+    st.floats(allow_nan=False, allow_infinity=False),
+    st.text(max_size=15),
+    st.lists(_JSON_VALUES, max_size=4),
+    st.dictionaries(st.text(min_size=1, max_size=6, alphabet=string.ascii_lowercase),
+                   _JSON_VALUES, max_size=4),
+))
+_EVENT_KEYS = string.ascii_lowercase.replace("t", "")
+_EVENTS = st.dictionaries(
+    st.text(min_size=1, max_size=6, alphabet=_EVENT_KEYS),
+    _JSON_VALUES, min_size=1, max_size=6,
+)
+_PAIRS = st.lists(st.tuples(st.sampled_from(KINDS), _EVENTS), max_size=8)
+
+
+# ---- 2.1 any list of events gives an intact book ---------------------------------------------
+
+@given(pairs=_PAIRS)
+@settings(max_examples=100, deadline=None)
+def test_property_any_sequence_of_events_is_intact(pairs):
+    # an empty list is allowed, so the empty book (count 0, head linking to zeros) is covered
+    assert verify(_book(*pairs)) == {"intact": True, "count": len(pairs)}
+
+
+# ---- 2.2 changing any one field of any one receipt is caught at that receipt ----------------
+
+def _new_value_for(field, old):
+    """A strategy for a replacement value of one receipt field that differs from ``old``."""
+    if field == "n":
+        return st.integers(min_value=1, max_value=1000)
+    if field == "at":
+        return st.floats(allow_nan=False, allow_infinity=False)
+    if field == "kind":
+        return st.text(min_size=1, max_size=10)
+    if field == "event":
+        return _EVENTS
+    if field in ("prev", "fp"):
+        return st.text(alphabet="0123456789abcdef", min_size=64, max_size=64)
+    return st.text(alphabet=string.ascii_letters + string.digits + "+/=", min_size=1, max_size=88)
+
+
+@st.composite
+def _book_one_field_and_new_value(draw):
+    pairs = draw(st.lists(st.tuples(st.sampled_from(KINDS), _EVENTS), min_size=1, max_size=8))
+    book = _book(*pairs)
+    k = draw(st.integers(min_value=0, max_value=len(book["receipts"]) - 1))
+    field = draw(st.sampled_from(["n", "at", "kind", "event", "prev", "fp", "sig"]))
+    old = book["receipts"][k][field]
+    new = draw(_new_value_for(field, old))
+    assume(new != old)        # a real change, not a no-op
+    return book, k, field, new
+
+
+@given(plan=_book_one_field_and_new_value())
+@settings(max_examples=100, deadline=None)
+def test_property_changing_one_field_is_caught_at_that_receipt(plan):
+    book, k, field, new = plan
+    book["receipts"][k][field] = new
+    out = verify(book)
+    assert out["intact"] is False
+    assert out["first_bad"] == k + 1          # the tampered receipt is the first to fail
+
+
+# ---- 2.3 removing a receipt or swapping two is caught (including from the end) ---------------
+
+@st.composite
+def _book_and_index(draw, min_size):
+    pairs = draw(st.lists(st.tuples(st.sampled_from(KINDS), _EVENTS),
+                         min_size=min_size, max_size=8))
+    book = _book(*pairs)
+    k = draw(st.integers(min_value=0, max_value=len(book["receipts"]) - 1))
+    return book, k
+
+
+@given(plan=_book_and_index(min_size=1))
+@settings(max_examples=100, deadline=None)
+def test_property_removing_any_one_receipt_is_caught(plan):
+    # any position: a middle gap fails the numbering; the last fails the signed head
+    book, k = plan
+    del book["receipts"][k]
+    out = verify(book)
+    assert out["intact"] is False
+    assert out["first_bad"] == k + 1
+
+
+@st.composite
+def _book_and_drop(draw):
+    pairs = draw(st.lists(st.tuples(st.sampled_from(KINDS), _EVENTS), min_size=1, max_size=8))
+    book = _book(*pairs)
+    drop = draw(st.integers(min_value=1, max_value=len(book["receipts"])))
+    return book, drop
+
+
+@given(plan=_book_and_drop())
+@settings(max_examples=100, deadline=None)
+def test_property_truncating_receipts_from_the_end_is_caught(plan):
+    book, drop = plan
+    total = len(book["receipts"])
+    del book["receipts"][total - drop:]        # cut a suffix from the end
+    out = verify(book)
+    assert out["intact"] is False
+    assert out["why"] == "receipts are missing from the end of the book"
+    assert out["first_bad"] == len(book["receipts"]) + 1
+
+
+@st.composite
+def _book_and_two_indices(draw):
+    pairs = draw(st.lists(st.tuples(st.sampled_from(KINDS), _EVENTS), min_size=2, max_size=8))
+    book = _book(*pairs)
+    n = len(book["receipts"])
+    i = draw(st.integers(min_value=0, max_value=n - 1))
+    j = draw(st.integers(min_value=0, max_value=n - 1))
+    assume(i != j)
+    return book, i, j
+
+
+@given(plan=_book_and_two_indices())
+@settings(max_examples=100, deadline=None)
+def test_property_swapping_two_receipts_is_caught(plan):
+    book, i, j = plan
+    book["receipts"][i], book["receipts"][j] = book["receipts"][j], book["receipts"][i]
+    out = verify(book)
+    assert out["intact"] is False
+    assert out["first_bad"] == min(i, j) + 1

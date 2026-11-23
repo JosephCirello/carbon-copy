@@ -3,10 +3,12 @@
 Every event that passes through Receipts (a verdict, a PayPal call, a desk call,
 an owner's tap, a flagged word, the end-of-day report) gets one receipt here, at
 the moment it happens. Each receipt carries the fingerprint of the receipt before
-it and a signature over its own fingerprint. The book only ever appends; there is
-no update or delete. Anyone holding the receipts and the public key can run
-``verify`` and learn whether the book is intact or which receipt was first changed,
-in plain words.
+it and a signature over its own fingerprint. The book also carries a signed count
+of its receipts, so removing receipts from the end — which the chain of links
+alone cannot show — is caught. The book only ever appends; there is no update or
+delete. Anyone holding the receipts and the public key can run ``verify`` and
+learn whether the book is intact or which receipt was first changed, in plain
+words.
 
 The private signing key never leaves this module: it comes from the
 ``CARBON_COPY_KEY`` environment variable (a 32-byte Ed25519 seed in hex) or is
@@ -140,8 +142,25 @@ class CarbonCopy:
         return copy.deepcopy(self._receipts)
 
     def book(self) -> dict:
-        """Return ``{"public_key": <hex>, "receipts": [...]}``, all as copies."""
-        return {"public_key": self._signer.public_key_hex, "receipts": self.receipts()}
+        """Return the public key, a signed head and the receipts, all as copies.
+
+        The head is a signed count of the book::
+
+            {"count": N, "last_fp": <fp of receipt N or 64 zeros>, "sig": <base64>}
+
+        ``count`` is the number of receipts and ``last_fp`` is the fingerprint of
+        the last receipt (64 zeros when the book is empty). ``sig`` is a signature
+        over ``bytes.fromhex(fingerprint({"count": N, "last_fp": ...}))`` made with
+        the same key as the receipts. A hash chain alone cannot show when the last
+        receipt (or the last several) has been deleted: every receipt left still
+        links up. The signed head does, so the check can tell the book is short.
+        """
+        receipts = self.receipts()
+        count = len(receipts)
+        last_fp = receipts[-1]["fp"] if receipts else GENESIS
+        head_fp = fingerprint({"count": count, "last_fp": last_fp})
+        head = {"count": count, "last_fp": last_fp, "sig": self._signer.sign(head_fp)}
+        return {"public_key": self._signer.public_key_hex, "head": head, "receipts": receipts}
 
 
 def _signature_ok(public_key_hex: str, fp_hex: str, sig_b64: str) -> bool:
@@ -168,6 +187,12 @@ def verify(book: dict) -> dict:
     Returns ``{"intact": True, "count": N}`` when every receipt checks out, or
     ``{"intact": False, "count": N, "first_bad": n, "why": "<plain words>"}``
     naming the first receipt that fails and why, in one of four plain reasons.
+    After the receipts it checks the signed head: a book with no head is *changed*
+    ("the book has no signed count"); a head whose signature does not verify is
+    *changed* ("the book's signed count was changed"); a head whose count or last
+    fingerprint does not match the receipts is *changed* ("receipts are missing
+    from the end of the book"). The head is what catches receipts removed from the
+    end, which the chain of links alone cannot show.
     """
     receipts = book.get("receipts") or []
     public_key = book.get("public_key", "")
@@ -188,4 +213,19 @@ def verify(book: dict) -> dict:
             return {"intact": False, "count": len(receipts), "first_bad": n,
                     "why": "its signature does not match"}
         prev_fp = r.get("fp")
+    # ---- the signed head: proves how many receipts the book should hold ----
+    # Every receipt left still links up after receipts are cut from the end, so the
+    # chain alone would say intact. The head is a count and the last fingerprint,
+    # signed, so the check can see the missing ones.
+    head = book.get("head")
+    if not isinstance(head, dict):
+        return {"intact": False, "count": len(receipts),
+                "why": "the book has no signed count"}
+    head_fp = fingerprint({"count": head.get("count"), "last_fp": head.get("last_fp")})
+    if not _signature_ok(public_key, head_fp, head.get("sig", "")):
+        return {"intact": False, "count": len(receipts),
+                "why": "the book's signed count was changed"}
+    if head.get("count") != len(receipts) or head.get("last_fp") != prev_fp:
+        return {"intact": False, "count": len(receipts), "first_bad": len(receipts) + 1,
+                "why": "receipts are missing from the end of the book"}
     return {"intact": True, "count": len(receipts)}

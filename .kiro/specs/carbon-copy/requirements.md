@@ -33,7 +33,8 @@ An AI agent pays a small business's bills through PayPal. Receipts (the base) al
 2. THE check SHALL need only the receipts and the public key; no secret.
 3. IF any single byte of any receipt's event, number, time, kind or links is changed THEN the check SHALL answer *changed*.
 4. IF a receipt is removed, or two are swapped THEN the check SHALL answer *changed*.
-5. IF every receipt of an untouched book is checked THEN the check SHALL answer *intact*.
+5. THE book SHALL carry a signed count of its receipts and the fingerprint of its last receipt, so that removing receipts from the END of the book — which the chain of links alone cannot show — is caught. IF the signed count is missing, or its signature does not match, or its count or last fingerprint does not match the receipts, THEN the check SHALL answer *changed* with the reason in plain words.
+6. IF every receipt of an untouched book is checked THEN the check SHALL answer *intact*.
 
 ### Requirement 5: keys
 

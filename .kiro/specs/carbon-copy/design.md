@@ -23,7 +23,13 @@ One new module, `receipts/carbon.py`, holds the book and the check. `Receipts.em
 - `at` is rounded to milliseconds before hashing, so the stored value and the hashed value are the same number.
 - The first receipt's `prev` is `"0" * 64`.
 
-A book handed out is `{"public_key": "<hex>", "receipts": [...]}`.
+A book handed out is `{"public_key": "<hex>", "head": {...}, "receipts": [...]}`. The `head` is a signed count of the book:
+
+```json
+{"count": 7, "last_fp": "e3b0c4…(64 hex)", "sig": "base64 of the Ed25519 signature over bytes.fromhex(fingerprint({\"count\": 7, \"last_fp\": …}))"}
+```
+
+`count` is the number of receipts and `last_fp` is the fingerprint of the last receipt (64 zeros when the book is empty). `sig` is a signature over `bytes.fromhex(fingerprint({"count": N, "last_fp": …}))` made with the same key as the receipts. A hash chain cannot show when the last receipt (or the last several) has been deleted: every receipt left still links up, so `verify` would say *intact*. The signed head lets the check compare the promised `count` and `last_fp` to the receipts and catch the missing ones.
 
 ## Components
 
@@ -35,11 +41,11 @@ A book handed out is `{"public_key": "<hex>", "receipts": [...]}`.
 - `__init__(signer)`
 - `append(kind, event) -> dict` builds, fingerprints, signs and stores one receipt; returns a copy.
 - `receipts() -> list[dict]` returns deep copies.
-- `book() -> dict` returns the public key and the receipts.
+- `book() -> dict` returns the public key, a signed `head` (the count and last fingerprint, signed), and the receipts.
 - No update or delete method.
 
 ### `verify(book) -> dict`
-Walks the receipts in order. For each: is `n` the next number; does `prev` equal the previous `fp`; does the recomputed fingerprint equal `fp`; does the signature verify against the public key. Stops at the first failure.
+Walks the receipts in order. For each: is `n` the next number; does `prev` equal the previous `fp`; does the recomputed fingerprint equal `fp`; does the signature verify against the public key. Stops at the first failure. Then it checks the `head`: its signature verifies, its `count` equals the number of receipts, and its `last_fp` equals the last receipt's fingerprint (64 zeros when empty). A book with no `head` is *changed* with the reason "the book has no signed count"; a `head` whose signature does not verify is *changed* with the reason "the book's signed count was changed"; a `head` whose `count` or `last_fp` does not match the receipts is *changed* with the reason "receipts are missing from the end of the book".
 Returns `{"intact": true, "count": N}` or `{"intact": false, "count": N, "first_bad": n, "why": "<plain words>"}`.
 
 ### `tamper_demo(book, n=None) -> dict`
@@ -64,5 +70,5 @@ A *Carbon copy* tab styled as a carbon-paper receipt book (a Halloween touch: fa
 ## Testing
 
 - Unit tests for the canonical form, the first receipt, signing and each failure reason.
-- Property-based tests (`hypothesis`): for any sequence of events, the untouched book is intact; changing any one field of any one receipt makes it *changed* at that receipt; deleting or swapping receipts is caught.
+- Property-based tests (`hypothesis`): for any sequence of events, the untouched book is intact; changing any one field of any one receipt makes it *changed* at that receipt; deleting or swapping receipts is caught, including removing receipts from the end of the book.
 - An integration test running one Receipts scenario on the stand-in with the book attached: the book is intact and holds one receipt per emitted event.

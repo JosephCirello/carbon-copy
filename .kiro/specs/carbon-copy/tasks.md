@@ -7,10 +7,10 @@
   - [x] 1.4 `verify()` with all four failure reasons in plain words; one unit test per reason
   - _Requirements: 2, 3, 4, 5_
 
-- [ ] 2. Property-based tests (`tests/test_carbon.py`, hypothesis)
-  - [ ] 2.1 Any list of events gives an intact book
-  - [ ] 2.2 Changing any one field of any one receipt is caught at that receipt
-  - [ ] 2.3 Removing a receipt or swapping two is caught
+- [x] 2. Property-based tests (`tests/test_carbon.py`, hypothesis)
+  - [x] 2.1 Any list of events gives an intact book
+  - [x] 2.2 Changing any one field of any one receipt is caught at that receipt
+  - [x] 2.3 Removing a receipt (including from the end) or swapping two is caught
   - _Requirements: 4_
 
 - [ ] 3. `tamper_demo()` and the command-line checker (`python -m receipts.carbon verify <file>`)
