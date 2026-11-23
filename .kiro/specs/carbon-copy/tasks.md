@@ -13,13 +13,13 @@
   - [x] 2.3 Removing a receipt (including from the end) or swapping two is caught
   - _Requirements: 4_
 
-- [ ] 3. `tamper_demo()` and the command-line checker (`python -m receipts.carbon verify <file>`)
-  - _Requirements: 6.3, 7_
+- [x] 3. `tamper_demo()` and the command-line checker (`python -m receipts.carbon verify <file>`)
+  - _Requirements: 6.3, 7, 8_
 
-- [ ] 4. Wire the book into Receipts
-  - [ ] 4.1 `Receipts(carbon=...)`; `emit()` appends every event
-  - [ ] 4.2 Integration test: one scenario on the stand-in gives an intact book with one receipt per event
-  - _Requirements: 1_
+- [x] 4. Wire the book into Receipts
+  - [x] 4.1 `Receipts(carbon=...)`; `emit()` appends every event
+  - [x] 4.2 Integration test: one scenario on the stand-in gives an intact book with one receipt per event
+  - _Requirements: 1, 8_
 
 - [ ] 5. The app
   - [ ] 5.1 `GET /api/carbon`, `POST /api/carbon/verify`, `POST /api/carbon/tamper`, with tests

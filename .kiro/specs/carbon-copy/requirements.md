@@ -53,3 +53,12 @@ An AI agent pays a small business's bills through PayPal. Receipts (the base) al
 ### Requirement 7: the check runs anywhere
 
 1. THE repository SHALL carry a command-line checker, `python -m receipts.carbon verify <book.json>`, that prints *intact* or the first changed receipt and exits 0 or 1.
+2. THE command-line checker SHALL accept an optional list of the owner's phone stamps, `python -m receipts.carbon verify <book.json> --stamps <stamps.json>`, and apply the check in Requirement 8.
+
+### Requirement 8: the owner's phone keeps the book's stamp
+
+The signed count (the head) stops anyone quietly removing receipts from the end of the book, because the head still names a count the receipts no longer reach. But someone holding an *older* signed count can cut the book back to that older length and put the older count back, and the book still checks out: the receipts left still link up, and the older count matches them. The fix is a copy of the count kept outside the book, on the owner's phone.
+
+1. WHEN the owner approves or declines a held payment THE SYSTEM SHALL hand the phone the book's signed head as it stands right after that tap is recorded.
+2. THE check SHALL accept a list of such stamps and answer *changed*, with the reason "the book is shorter than a stamp the owner's phone already holds", if any stamp's count is greater than the book's receipts, or its last fingerprint is not the fingerprint of the receipt at that position.
+3. THE check SHALL need only the receipts, the public key and the stamps; no secret.

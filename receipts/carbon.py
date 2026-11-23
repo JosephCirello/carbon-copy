@@ -13,7 +13,8 @@ words.
 The private signing key never leaves this module: it comes from the
 ``CARBON_COPY_KEY`` environment variable (a 32-byte Ed25519 seed in hex) or is
 generated in memory at start-up. Verifying the book needs only the receipts and
-the public key.
+the public key — and, to catch a book cut back to an older signed count, the
+owner's phone stamps. No secret is ever needed to check.
 """
 from __future__ import annotations
 
@@ -22,7 +23,9 @@ import copy
 import hashlib
 import json
 import os
+import sys
 import time
+from pathlib import Path
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
@@ -176,8 +179,8 @@ def _signature_ok(public_key_hex: str, fp_hex: str, sig_b64: str) -> bool:
         return False
 
 
-def verify(book: dict) -> dict:
-    """Check a book using only the receipts and the public key.
+def verify(book: dict, stamps=None) -> dict:
+    """Check a book using only the receipts and the public key (and the stamps).
 
     Walks the receipts in order. For each it asks, in turn: is ``n`` the next
     number; does ``prev`` equal the previous receipt's fingerprint; does the
@@ -193,6 +196,16 @@ def verify(book: dict) -> dict:
     fingerprint does not match the receipts is *changed* ("receipts are missing
     from the end of the book"). The head is what catches receipts removed from the
     end, which the chain of links alone cannot show.
+
+    Only when the book is intact on its own does it look at ``stamps`` — a list of
+    the owner's phone stamps, each a signed head handed to the phone when the
+    owner tapped. A signed count inside the book can be cut back to an older signed
+    count that still matches the receipts left; the phone holds a copy of the count
+    the book reached, outside the book. If any stamp's ``count`` is greater than the
+    number of receipts, or its ``last_fp`` is not the fingerprint of the receipt at
+    that position, the book is *changed* ("the book is shorter than a stamp the
+    owner's phone already holds"). The stamps are read only for their ``count`` and
+    ``last_fp``; a false stamp fails closed — it says *changed*.
     """
     receipts = book.get("receipts") or []
     public_key = book.get("public_key", "")
@@ -228,4 +241,115 @@ def verify(book: dict) -> dict:
     if head.get("count") != len(receipts) or head.get("last_fp") != prev_fp:
         return {"intact": False, "count": len(receipts), "first_bad": len(receipts) + 1,
                 "why": "receipts are missing from the end of the book"}
+    # ---- the owner's phone stamps: prove the book was not cut back to an older count ----
+    # The head inside the book closes its END, not its PAST: someone holding an older
+    # signed head can cut the book back to that older length and put the older head
+    # back, and the receipts left still link up and still match. The phone holds a
+    # copy of the head outside the book; if any stamp reaches further than the
+    # receipts the book now holds, or its last_fp is not the receipt at that
+    # position, the book was cut back to an older state.
+    if stamps:
+        n = len(receipts)
+        for stamp in stamps:
+            if not isinstance(stamp, dict):
+                continue
+            sc = stamp.get("count")
+            sl = stamp.get("last_fp")
+            if not isinstance(sc, int) or not isinstance(sl, str):
+                continue
+            if sc > n or (1 <= sc <= n and receipts[sc - 1].get("fp") != sl):
+                return {"intact": False, "count": n, "first_bad": sc,
+                        "why": "the book is shorter than a stamp the owner's phone already holds"}
     return {"intact": True, "count": len(receipts)}
+
+
+def _different_value(v):
+    """A value of the same rough kind as ``v`` but never equal to it, for the tamper demo."""
+    if isinstance(v, bool):
+        return not v
+    if isinstance(v, (int, float)):
+        return v + 1
+    if isinstance(v, str):
+        return v + "!"
+    if isinstance(v, list):
+        return [*v, "tampered"]
+    if isinstance(v, dict):
+        return {**v, "_tampered": True}
+    return "tampered"
+
+
+def tamper_demo(book: dict, n: int | None = None) -> dict:
+    """Show the check catching a change to one receipt, without touching the real book.
+
+    Deep-copies the book, changes one value in one receipt's event — the amount if
+    there is one, else another field of the event (or the receipt's ``kind`` when
+    the event is empty) — runs :func:`verify` on the copy and returns the receipt
+    number, the field changed, the before and after values, and the result. The book
+    passed in is never modified: only the deep copy is.
+    """
+    work = copy.deepcopy(book)
+    receipts = work.get("receipts") or []
+    if not receipts:
+        return {"n": None, "field": None, "before": None, "after": None, "result": verify(work)}
+    if n is not None:
+        idx = n - 1
+    else:
+        # the most recent money move, so the demo changes a real amount when one exists
+        with_amount = [i for i, r in enumerate(receipts) if "amount" in (r.get("event") or {})]
+        idx = with_amount[-1] if with_amount else len(receipts) - 1
+    if idx < 0 or idx >= len(receipts):
+        idx = len(receipts) - 1
+    rec = receipts[idx]
+    ev = rec.get("event")
+    if isinstance(ev, dict) and ev:
+        field = "amount" if "amount" in ev else next(iter(ev))
+        before = ev.get(field)
+        after = _different_value(before)
+        ev[field] = after
+    else:
+        field = "kind"
+        before = rec.get("kind")
+        after = _different_value(before) if before is not None else "tampered"
+        rec["kind"] = after
+    return {"n": idx + 1, "field": field, "before": before, "after": after, "result": verify(work)}
+
+
+def _plain(result: dict) -> str:
+    """One line in plain words: intact with the count, or the first changed receipt."""
+    if result.get("intact"):
+        return f"intact ({result.get('count', 0)} receipts)"
+    first_bad = result.get("first_bad")
+    why = result.get("why", "")
+    return f"receipt {first_bad}: {why}" if first_bad is not None else why
+
+
+def _main(argv=None) -> int:
+    """``python -m receipts.carbon verify <book.json> [--stamps <stamps.json>]``.
+
+    Prints *intact* with the count, or the first changed receipt in plain words, and
+    exits 0 when intact, 1 when changed.
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(prog="python -m receipts.carbon", description="Check a carbon-copy receipt book.")
+    sub = parser.add_subparsers(dest="command", required=True)
+    verify_p = sub.add_parser("verify", help="check a book and print intact or the first changed receipt")
+    verify_p.add_argument("book", help="path to a book JSON file")
+    verify_p.add_argument("--stamps", help="path to a JSON list of the owner's phone stamps")
+    args = parser.parse_args(argv)
+
+    if args.command == "verify":
+        try:
+            book = json.loads(Path(args.book).read_text(encoding="utf-8"))
+            stamps = json.loads(Path(args.stamps).read_text(encoding="utf-8")) if args.stamps else None
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"could not read the book: {exc}", file=sys.stderr)
+            return 1
+        out = verify(book, stamps)
+        print(_plain(out))
+        return 0 if out.get("intact") else 1
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(_main())

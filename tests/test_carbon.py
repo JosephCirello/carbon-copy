@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import json
 import string
+import subprocess
 import sys
 from pathlib import Path
 
@@ -26,6 +27,7 @@ from receipts.carbon import (  # noqa: E402
     Signer,
     canonical,
     fingerprint,
+    tamper_demo,
     verify,
 )
 
@@ -501,3 +503,217 @@ def test_property_swapping_two_receipts_is_caught(plan):
     out = verify(book)
     assert out["intact"] is False
     assert out["first_bad"] == min(i, j) + 1
+
+
+# ---- 8 the owner's phone keeps the book's stamp -----------------------------------------------
+# A signed count inside the book can be cut back to an older signed count that still
+# matches the receipts left; the owner's phone holds a copy of the head outside the
+# book, and verify(book, stamps) checks the book against those stamps.
+
+def _head_at(signer, count, last_fp):
+    """A valid signed head at a given count — the shape the owner's phone holds."""
+    return {"count": count, "last_fp": last_fp,
+            "sig": signer.sign(fingerprint({"count": count, "last_fp": last_fp}))}
+
+
+def test_verify_with_no_stamps_behaves_as_before():
+    book = _book(("verdict", E1), ("paypal", E2), ("owner", E3))
+    assert verify(book) == {"intact": True, "count": 3}
+    assert verify(book, stamps=None) == {"intact": True, "count": 3}
+    assert verify(book, stamps=[]) == {"intact": True, "count": 3}
+
+
+def test_verify_accepts_stamps_when_the_book_reaches_every_one():
+    signer = _signer()
+    carbon = CarbonCopy(signer)
+    for i in range(5):
+        carbon.append("verdict", {"t": 1795462000.001 + i, "amount": 100 + i, "invoice": f"INV-{i}"})
+    book = carbon.book()
+    recs = carbon.receipts()
+    stamp3 = _head_at(signer, 3, recs[2]["fp"])    # the phone saw the book at 3
+    stamp5 = book["head"]                           # the phone saw the book at 5 (the current head)
+    assert verify(book, stamps=[stamp3, stamp5]) == {"intact": True, "count": 5}
+
+
+def test_a_stamp_reaching_past_a_truncated_book_is_caught():
+    # someone cuts the book back to 3 receipts and puts back an older signed head at 3;
+    # the phone holds a stamp at 5, which the truncated book no longer reaches
+    signer = _signer()
+    carbon = CarbonCopy(signer)
+    for i in range(5):
+        carbon.append("verdict", {"t": 1795462000.001 + i, "amount": 100 + i})
+    recs = carbon.receipts()
+    truncated = {"public_key": signer.public_key_hex, "head": _head_at(signer, 3, recs[2]["fp"]),
+                 "receipts": recs[:3]}
+    # the truncated book is intact on its own — the older head matches the three receipts
+    assert verify(truncated) == {"intact": True, "count": 3}
+    # but the phone's stamp at 5 reaches past it
+    stamp5 = _head_at(signer, 5, recs[4]["fp"])
+    out = verify(truncated, stamps=[stamp5])
+    assert out["intact"] is False
+    assert out["why"] == "the book is shorter than a stamp the owner's phone already holds"
+    assert out["first_bad"] == 5
+
+
+def test_a_stamp_whose_last_fp_is_not_the_receipt_at_that_position_is_caught():
+    signer = _signer()
+    carbon = CarbonCopy(signer)
+    for i in range(5):
+        carbon.append("verdict", {"t": 1795462000.001 + i, "amount": 100 + i})
+    book = carbon.book()
+    recs = carbon.receipts()
+    # a stamp at count 3 that claims the wrong last fingerprint (receipt 3 differs)
+    bad_stamp = _head_at(signer, 3, recs[4]["fp"])
+    out = verify(book, stamps=[bad_stamp])
+    assert out["intact"] is False
+    assert out["why"] == "the book is shorter than a stamp the owner's phone already holds"
+    assert out["first_bad"] == 3
+
+
+def test_any_one_of_several_stamps_is_enough_to_flag_a_short_book():
+    signer = _signer()
+    carbon = CarbonCopy(signer)
+    for i in range(5):
+        carbon.append("verdict", {"t": 1795462000.001 + i, "amount": 100 + i})
+    recs = carbon.receipts()
+    truncated = {"public_key": signer.public_key_hex, "head": _head_at(signer, 2, recs[1]["fp"]),
+                 "receipts": recs[:2]}
+    stamp2 = _head_at(signer, 2, recs[1]["fp"])    # satisfied (the book is at 2)
+    stamp4 = _head_at(signer, 4, recs[3]["fp"])    # reaches past the truncated book
+    out = verify(truncated, stamps=[stamp2, stamp4])
+    assert out["intact"] is False
+    assert out["why"] == "the book is shorter than a stamp the owner's phone already holds"
+
+
+def test_a_stamp_at_the_books_own_count_is_accepted():
+    # approving a hold hands the phone the head as it stands; that stamp must be accepted
+    signer = _signer()
+    carbon = CarbonCopy(signer)
+    for i in range(3):
+        carbon.append("verdict", {"t": 1795462000.001 + i, "amount": 100 + i})
+    book = carbon.book()
+    stamp = book["head"]
+    assert verify(book, stamps=[stamp]) == {"intact": True, "count": 3}
+
+
+def test_an_empty_book_with_a_stamp_at_zero_is_intact():
+    book = _book()
+    stamp = {"count": 0, "last_fp": GENESIS, "sig": ""}
+    assert verify(book, stamps=[stamp]) == {"intact": True, "count": 0}
+
+
+# ---- 3 tamper_demo ---------------------------------------------------------------------------
+
+def test_tamper_demo_changes_a_copy_not_the_real_book():
+    carbon = CarbonCopy(_signer())
+    carbon.append("verdict", {"t": 1795462000.001, "amount": 1836.00, "invoice": "INV-BR-1197"})
+    carbon.append("paypal", {"t": 1795462000.002, "tool": "list_transactions", "result": {"total_items": 1}})
+    book_before = carbon.book()
+
+    demo = tamper_demo(book_before)
+
+    assert carbon.book() == book_before                       # the real book is untouched
+    assert carbon.receipts()[0]["event"]["amount"] == 1836.00
+    # the only receipt with an amount is receipt 1, so that is the one changed
+    assert demo["n"] == 1
+    assert demo["field"] == "amount"
+    assert demo["before"] == 1836.00
+    assert demo["after"] == 1837.0
+    assert demo["result"]["intact"] is False
+    assert demo["result"]["first_bad"] == 1
+    assert demo["result"]["why"] == "its content was changed"
+
+
+def test_tamper_demo_can_target_a_chosen_receipt():
+    carbon = CarbonCopy(_signer())
+    carbon.append("verdict", {"t": 1795462000.001, "amount": 100.0})
+    carbon.append("verdict", {"t": 1795462000.002, "amount": 200.0})
+    book = carbon.book()
+    demo = tamper_demo(book, n=2)
+    assert demo["n"] == 2
+    assert demo["field"] == "amount"
+    assert demo["before"] == 200.0
+    assert demo["after"] == 201.0
+    assert demo["result"]["first_bad"] == 2
+    assert carbon.book() == book                               # the real book is untouched
+
+
+def test_tamper_demo_falls_back_to_another_event_field_when_there_is_no_amount():
+    carbon = CarbonCopy(_signer())
+    carbon.append("paypal", {"t": 1795462000.001, "tool": "list_transactions", "result": {"total_items": 1}})
+    book = carbon.book()
+    demo = tamper_demo(book)
+    assert demo["n"] == 1
+    assert demo["field"] == "tool"                             # no amount, so the first event field
+    assert demo["result"]["intact"] is False
+    assert demo["result"]["first_bad"] == 1
+
+
+def test_tamper_demo_returns_intact_for_an_empty_book():
+    book = _book()
+    demo = tamper_demo(book)
+    assert demo["n"] is None
+    assert demo["field"] is None
+    assert demo["result"] == {"intact": True, "count": 0}
+
+
+def test_tamper_demo_never_mutates_the_book_passed_in():
+    carbon = CarbonCopy(_signer())
+    carbon.append("verdict", {"t": 1795462000.001, "amount": 100.0})
+    book = carbon.book()
+    snapshot = json.loads(json.dumps(book))
+    tamper_demo(book)
+    tamper_demo(book, n=1)
+    assert book == snapshot
+
+
+# ---- 3 the command-line checker ---------------------------------------------------------------
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def _run_cli(book_path, stamps_path=None):
+    args = [sys.executable, "-m", "receipts.carbon", "verify", str(book_path)]
+    if stamps_path:
+        args += ["--stamps", str(stamps_path)]
+    return subprocess.run(args, capture_output=True, text=True, cwd=str(ROOT))
+
+
+def test_cli_prints_intact_and_exits_zero_for_a_good_book(tmp_path):
+    book = _book(("verdict", E1), ("paypal", E2), ("owner", E3))
+    p = tmp_path / "book.json"
+    p.write_text(json.dumps(book), encoding="utf-8")
+    proc = _run_cli(p)
+    assert proc.returncode == 0
+    assert "intact" in proc.stdout
+    assert "3" in proc.stdout
+
+
+def test_cli_prints_the_first_changed_receipt_and_exits_one(tmp_path):
+    book = _book(("verdict", E1), ("paypal", E2), ("owner", E3))
+    book["receipts"][1]["event"]["tool"] = "create_refund"   # receipt 2's content no longer matches its fp
+    p = tmp_path / "book.json"
+    p.write_text(json.dumps(book), encoding="utf-8")
+    proc = _run_cli(p)
+    assert proc.returncode == 1
+    assert "receipt 2" in proc.stdout
+    assert "its content was changed" in proc.stdout
+
+
+def test_cli_applies_the_stamps_and_flags_a_short_book(tmp_path):
+    signer = _signer()
+    carbon = CarbonCopy(signer)
+    for i in range(5):
+        carbon.append("verdict", {"t": 1795462000.001 + i, "amount": 100 + i})
+    recs = carbon.receipts()
+    truncated = {"public_key": signer.public_key_hex, "head": _head_at(signer, 3, recs[2]["fp"]),
+                 "receipts": recs[:3]}
+    stamp5 = _head_at(signer, 5, recs[4]["fp"])
+    bp = tmp_path / "book.json"
+    sp = tmp_path / "stamps.json"
+    bp.write_text(json.dumps(truncated), encoding="utf-8")
+    sp.write_text(json.dumps([stamp5]), encoding="utf-8")
+    assert _run_cli(bp).returncode == 0                          # without stamps the truncated book looks intact
+    proc = _run_cli(bp, sp)                                       # with stamps the phone catches the rollback
+    assert proc.returncode == 1
+    assert "the book is shorter than a stamp the owner's phone already holds" in proc.stdout

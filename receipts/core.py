@@ -23,7 +23,8 @@ from .rules import MONEY_TOOLS, RuleBook, Verdict, money
 
 
 class Receipts:
-    def __init__(self, scenario: dict, paypal, mode: str = "enforce", policy: dict | None = None, on_event=None):
+    def __init__(self, scenario: dict, paypal, mode: str = "enforce", policy: dict | None = None, on_event=None,
+                 carbon=None):
         self.scenario = scenario
         self.paypal = paypal
         self.mode = mode
@@ -38,9 +39,12 @@ class Receipts:
         self.id_aliases: dict[str, str] = {}   # e.g. a refund id from a recorded run -> its order id
         self.report_check: dict | None = None
         self.on_event = on_event or (lambda e: None)
+        self.carbon = carbon                 # a CarbonCopy: append-only, signed receipt book; None leaves Receipts unchanged
 
     def emit(self, **e):
         e["t"] = round(time.time(), 3)
+        if self.carbon is not None:
+            self.carbon.append(e["type"], e)   # one receipt per event, before anyone hears it
         self.on_event(e)
 
     # ---- words -------------------------------------------------------------------------
@@ -179,6 +183,9 @@ class Receipts:
         res = self._forward(h["tool"], h["args"])
         h["result"] = {k: res.get(k) for k in ("payout_batch_id", "batch_status", "id", "status", "error", "backend") if isinstance(res, dict) and k in res}
         self.emit(type="owner", action="approved", hold_id=hold_id, result=_short(res))
+        if self.carbon is not None and isinstance(res, dict):
+            # the book's signed head right after this tap is recorded — handed to the owner's phone
+            res["stamp"] = self.carbon.book()["head"]
         return res
 
     def decline(self, hold_id: str) -> dict:
@@ -187,7 +194,10 @@ class Receipts:
             return {"error": "no such waiting hold"}
         h["status"] = "DECLINED"
         self.emit(type="owner", action="declined", hold_id=hold_id)
-        return {"declined": hold_id}
+        out = {"declined": hold_id}
+        if self.carbon is not None:
+            out["stamp"] = self.carbon.book()["head"]   # the book's signed head right after this tap
+        return out
 
     # ---- the report against PayPal ------------------------------------------------------------
     def _ids_in(self, xs) -> set[str]:
