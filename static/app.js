@@ -359,6 +359,7 @@ async function pollHolds() {
 }
 
 /* ---------- carbon copy ---------- */
+let CC_PICK = null;                              // "enforce" or "observe" once the visitor uses the switch; null = the default (on)
 let CC = null;                                   // the book last fetched for this visitor's current run
 const CC_EMPTY = "Run Maya's day on the Watch tab first. Every move the AI makes will be copied here.";
 const PP_NAME = (b) => (b === "sandbox" ? "PayPal sandbox" : "PayPal stand-in");
@@ -400,6 +401,9 @@ function ccFmt(field, v) { return field === "amount" && typeof v === "number" ? 
 function drawCarbon() {
   const box = $("#ccBook"), has = CC && CC.receipts && CC.receipts.length;
   const hasBook = !!has;
+  const sw = $("#ccSwitch");
+  sw.hidden = !(CC && CC.has_twin);
+  if (CC && CC.mode) sw.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === CC.mode)));
   ["#ccCheck", "#ccTamper", "#ccDownload"].forEach((s) => ($(s).disabled = !hasBook));
   if (!hasBook) {
     $("#ccSub").textContent = CC_EMPTY;
@@ -407,7 +411,8 @@ function drawCarbon() {
     return;
   }
   const mode = META.paypal_mode === "sandbox" ? "PayPal sandbox" : "PayPal stand-in (no real money, no PayPal account)";
-  $("#ccSub").textContent = `${CC.receipts.length} receipts from a ${CC.source}. PayPal here: ${mode}.`;
+  const which = CC.mode === "observe" ? "the run with Carbon Copy off" : "the run with Carbon Copy on";
+  $("#ccSub").textContent = `${CC.receipts.length} receipts from ${which} (a ${CC.source}). PayPal here: ${mode}.`;
   const dev = $("#ccDev").checked;
   box.innerHTML = CC.receipts.map((r) => dev
     ? `<div class="cc-row"><pre class="cc-json">${esc(JSON.stringify(r, null, 2))}</pre></div>`
@@ -415,7 +420,7 @@ function drawCarbon() {
 }
 async function loadCarbon() {
   try {
-    const res = await fetch("/api/carbon");
+    const res = await fetch("/api/carbon" + (CC_PICK ? "?mode=" + CC_PICK : ""));
     if (!res.ok) return;
     const b = await res.json();
     if (!CC || CC.session !== b.session || (CC.receipts || []).length !== (b.receipts || []).length || (CC.stamps || []).length !== (b.stamps || []).length) $("#ccResult").innerHTML = "";
@@ -427,6 +432,12 @@ function bookParts() {
   return { book: { public_key: CC.public_key, head: CC.head, receipts: CC.receipts }, stamps: CC.stamps || [] };
 }
 $("#ccDev").addEventListener("change", drawCarbon);
+$("#ccSwitch").addEventListener("click", (ev) => {
+  const b = ev.target.closest("button[data-mode]");
+  if (!b || b.dataset.mode === (CC && CC.mode)) return;
+  CC_PICK = b.dataset.mode;
+  loadCarbon();
+});
 $("#ccCheck").addEventListener("click", async () => {
   if (!CC) return;
   const res = await fetch("/api/carbon/verify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(bookParts()) });
@@ -436,7 +447,7 @@ $("#ccCheck").addEventListener("click", async () => {
 });
 $("#ccTamper").addEventListener("click", async () => {
   if (!CC) return;
-  const res = await fetch("/api/carbon/tamper" + (CC.session ? "?sid=" + encodeURIComponent(CC.session) : ""), { method: "POST" });
+  const res = await fetch("/api/carbon/tamper" + (CC.session ? "?sid=" + encodeURIComponent(CC.session) + "&mode=" + encodeURIComponent(CC.mode || "enforce") : ""), { method: "POST" });
   if (!res.ok) { $("#ccResult").textContent = "There is nothing to change yet."; return; }
   const t = await res.json(), r = t.result || {};
   const what = t.n == null ? "" : `<p class="cc-say">${esc(t.say || `We changed receipt #${t.n} from ${ccFmt(t.field, t.before)} to ${ccFmt(t.field, t.after)} in a copy of the book.`)} The real book was not touched.</p>`;

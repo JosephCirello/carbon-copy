@@ -50,6 +50,9 @@ An AI agent pays a small business's bills through PayPal. Receipts (the base) al
 3. THE screen SHALL have a *Try to change one* demo that alters a copy of one receipt (never the real book) and shows the check catching it, naming the receipt.
 4. THE owner's book download (the accountant's spreadsheet) SHALL carry each row's receipt number and fingerprint.
 5. A *Download the carbon copies* button SHALL hand over the whole book as a file with the public key, so the check can be run elsewhere.
+6. THE screen SHALL show, by default, the book of the visitor's most recent run with Carbon Copy ON (mode "enforce"), whichever of the side-by-side runs finished last. Only when the visitor has no such run SHALL it show the most recent run of any mode.
+7. WHEN the shown run has a twin with Carbon Copy OFF (mode "observe") for the same day, THE screen SHALL show a small switch above the receipts reading "Showing: Carbon Copy on (the run Maya saw)", with a second choice "Carbon Copy off (nothing checked it)". The source line SHALL name which run is shown.
+8. *Check the book*, *Try to change one* and *Download the carbon copies* SHALL act on the book that is shown, so that after Maya declines a held payment the demo's change reads that she approved it.
 
 ### Requirement 7: the check runs anywhere
 

@@ -140,6 +140,11 @@
       <div class="cc-head">
         <h2>The carbon copies</h2>
         <p class="cc-sub" id="ccSub"></p>
+        <div class="cc-switch" id="ccSwitch" role="group" aria-label="Which book to show" hidden>
+          <span>Showing:</span>
+          <button type="button" data-mode="enforce" aria-pressed="true">Carbon Copy on (the run Maya saw)</button>
+          <button type="button" data-mode="observe" aria-pressed="false">Carbon Copy off (nothing checked it)</button>
+        </div>
         <div class="cc-tools">
           <button class="go" id="ccCheck">Check the book</button>
           <button class="go" id="ccTamper">Try to change one</button>

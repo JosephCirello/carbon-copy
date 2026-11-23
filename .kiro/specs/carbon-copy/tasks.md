@@ -34,3 +34,10 @@
   - [x] 7.2 `tamper_demo()` flips an owner "declined" to "approved" and says so in plain words, with a fallback for books with no owner action; tests for both paths
   - [x] 7.3 No sideways scroll from 375 to 1400 pixels on every tab
   - [x] 7.4 Hosted demo on the stand-in (`PAYPAL_MODE=standin` in `render.yaml`); badge and source line say so
+
+- [x] 8. The Carbon copy tab shows the ON run's book by default (bug from the live demo: the OFF run finished last and was shown)
+  - [x] 8.1 design.md and requirements.md (Requirement 6.6 to 6.8)
+  - [x] 8.2 `GET /api/carbon` and `POST /api/carbon/tamper` take an optional `mode`; default is the latest enforce run, with no dependence on finishing order
+  - [x] 8.3 The switch and the mode on every call in `static/app.js`
+  - [x] 8.4 Tests in `tests/test_carbon_app.py`
+  - _Requirements: 6_

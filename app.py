@@ -491,27 +491,46 @@ def decline(body: HoldIn, request: Request):
 
 
 # ---- the carbon-copy book -------------------------------------------------------------------------------
-def _carbon_session(request: Request, sid: str | None) -> dict | None:
-    """This visitor's run with that id, or (no id) their most recent one. Only their own runs, never another's."""
+def _carbon_session(request: Request, sid: str | None, mode: str | None = None) -> dict | None:
+    """The run whose book to show. Only this visitor's runs, never another's.
+
+    With an id: that run. Otherwise the latest run of the asked mode; with no mode, the latest ENFORCE run, and
+    only when there is none the latest of any mode. The choice looks at the runs' modes, never at which replay
+    finished last, so the two side-by-side replays cannot race.
+    """
     v = _visitor(request)
     with _VISITORS_LOCK:
         mine = dict(v.sessions) if v else {}
-    if sid is None:
-        return next(iter(reversed(mine.values())), None)
-    return mine.get(sid)
+    if sid is not None:
+        return mine.get(sid)
+    newest_first = list(reversed(mine.values()))
+    if mode is not None:
+        return next((s for s in newest_first if s["r"].mode == mode), None)
+    return next((s for s in newest_first if s["r"].mode == "enforce"), None) or next(iter(newest_first), None)
+
+
+def _check_mode(mode: str | None) -> None:
+    if mode not in (None, "enforce", "observe"):
+        raise HTTPException(400, "mode must be enforce or observe")
 
 
 @app.get("/api/carbon")
-def carbon_book(request: Request, sid: str | None = None):
-    s = _carbon_session(request, sid)
+def carbon_book(request: Request, sid: str | None = None, mode: str | None = None):
+    _check_mode(mode)
+    s = _carbon_session(request, sid, mode)
     if s is None:
         if sid is not None:
             raise HTTPException(404, "session expired")
-        return {"public_key": None, "head": None, "receipts": [], "stamps": [], "source": None, "session": None}
+        return {"public_key": None, "head": None, "receipts": [], "stamps": [], "source": None, "session": None,
+                "mode": None, "has_twin": False}
+    v = _visitor(request)
+    mine = list(v.sessions.values()) if v else []
     with _VISITORS_LOCK:
         stamps = copy.deepcopy(s["stamps"])
-    return {**s["carbon"].book(), "stamps": stamps, "source": s["source"], "session": s["sid"]}
-
+        other = "observe" if s["r"].mode == "enforce" else "enforce"
+        twin = any(o["r"].mode == other and o["r"].scenario["id"] == s["r"].scenario["id"] for o in mine)
+    return {**s["carbon"].book(), "stamps": stamps, "source": s["source"], "session": s["sid"],
+            "mode": s["r"].mode, "has_twin": twin}
 
 class VerifyIn(BaseModel):
     book: dict
@@ -527,9 +546,10 @@ def carbon_verify_book(body: VerifyIn):
 
 
 @app.post("/api/carbon/tamper")
-def carbon_tamper(request: Request, sid: str | None = None):
+def carbon_tamper(request: Request, sid: str | None = None, mode: str | None = None):
     """Change one value in a COPY of the book and show the check catching it. The real book is never touched."""
-    s = _carbon_session(request, sid)
+    _check_mode(mode)
+    s = _carbon_session(request, sid, mode)
     if s is None:
         raise HTTPException(404, "no run to copy yet")
     return tamper_demo(s["carbon"].book())

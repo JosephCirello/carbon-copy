@@ -106,3 +106,11 @@ The accountant's download from *Her book* gains *Receipt #* and *Fingerprint* co
 - **Change-one demo.** As in `tamper_demo` above.
 - **No sideways scroll.** At every width from 375 to 1400 pixels `document.documentElement.scrollWidth` equals `window.innerWidth` on every tab. Long words and fingerprints wrap; the header wraps; only the tab bar scrolls, inside itself.
 - **Hosted demo.** `render.yaml` sets `PAYPAL_MODE=standin`. The header badge and the Carbon copy source line read "PayPal stand-in (no real money, no PayPal account)". Locally `PAYPAL_MODE=auto` is unchanged.
+
+## Which book the tab shows (task 8)
+
+Found on the live demo: "Run the day" starts two replays for one visitor, one with Carbon Copy off (mode "observe") and one on (mode "enforce"). `GET /api/carbon` with no session took the visitor's most recently registered run, so whichever replay finished last decided the book. Online the OFF run finished last, so after Maya declined a payment the tab showed the OFF book, which has no owner action, and "Try to change one" fell back to the amount change.
+
+- **Server.** `GET /api/carbon` and `POST /api/carbon/tamper` take an optional `mode` ("enforce" or "observe"; anything else is a 400) next to the optional `sid`. Choice order: `sid` if given; else the visitor's latest run of `mode` if given; else the visitor's latest ENFORCE run; else, only when there is no enforce run, the latest run of any mode. The choice reads each run's mode and never the order the replays finished in. The book response adds `mode` (the shown run's mode) and `has_twin` (true when the visitor also has a run of the other mode for the same day).
+- **Screen.** When `has_twin` is true a small switch sits above the receipts: "Showing:" then two buttons, "Carbon Copy on (the run Maya saw)" and "Carbon Copy off (nothing checked it)". With no twin the switch is hidden. The source line names the shown run ("the run with Carbon Copy on" or "off"). Every call from the tab (`/api/carbon`, `/api/carbon/tamper`) passes the mode that is shown. Check and download use the book on screen.
+- **Tests.** Both replays started in either order give the enforce book from `GET /api/carbon`; after a decline `tamper` on the default book says Maya approved what she declined; `mode=observe` returns the observe book; a bad mode is a 400.

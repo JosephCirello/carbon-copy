@@ -404,3 +404,7 @@ html, body { max-width: 100%; }
 .cc-wrap { box-sizing: border-box; }
 .stamp { max-width: 100%; box-sizing: border-box; overflow-wrap: anywhere; }
 @media (max-width: 600px) { .cc-wrap { padding: 16px 14px 28px; } .stamp { margin-left: 0; } }
+.cc-switch { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 12px; font-family: "Special Elite", "Courier New", monospace; color: #8aa8dc; }
+.cc-switch[hidden] { display: none; }
+.cc-switch button { background: transparent; color: #8aa8dc; border: 1px solid #34364a; border-radius: 6px; padding: 6px 10px; font: inherit; font-size: 13px; cursor: pointer; }
+.cc-switch button[aria-pressed="true"] { background: #8aa8dc; color: #14131a; border-color: #8aa8dc; }

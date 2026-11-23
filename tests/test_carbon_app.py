@@ -114,3 +114,58 @@ def test_a_book_sent_through_a_browser_still_verifies_intact(client):
     sent = _browser_like(book)
     out = client.post("/api/carbon/verify", json={"book": sent, "stamps": sent["stamps"]}).json()
     assert out == {"intact": True, "count": len(book["receipts"])}
+
+
+# ---- which book the tab shows (task 8) ----------------------------------------------------------------------
+def _lines(client):
+    rows = client.get("/api/recorded", params={"scenario": DAY, "model": MODEL}).json()
+    return sorted((r for r in rows if r["mode"] == "enforce"), key=lambda r: -(r["attempts"] or 0))[0]["line"]
+
+
+def _start_both(client, order):
+    """Start the two side-by-side replays for one visitor; the first named finishes first."""
+    line = _lines(client)
+    for mode in order:
+        res = client.get("/api/replay", params={"line": line, "speed": 100, "mode": mode})
+        assert res.status_code == 200 and '"type": "done"' in res.text
+
+
+@pytest.mark.parametrize("order", [("enforce", "observe"), ("observe", "enforce")])
+def test_the_default_book_is_the_enforce_run_whichever_finished_last(client, order):
+    _start_both(client, order)
+    book = client.get("/api/carbon").json()
+    assert book["mode"] == "enforce" and book["has_twin"] is True
+    off = client.get("/api/carbon", params={"mode": "observe"}).json()
+    assert off["mode"] == "observe" and off["has_twin"] is True and off["session"] != book["session"]
+    assert client.get("/api/carbon", params={"mode": "enforce"}).json()["session"] == book["session"]
+
+
+@pytest.mark.parametrize("order", [("enforce", "observe"), ("observe", "enforce")])
+def test_after_a_decline_tamper_on_the_default_book_says_approved_instead_of_declined(client, order):
+    _start_both(client, order)
+    hold = next(h for h in client.get("/api/holds").json() if h["status"] == "WAITING")
+    assert client.post("/api/decline", json={"session": hold["session"], "hold_id": hold["id"]}).status_code == 200
+    t = client.post("/api/carbon/tamper").json()
+    assert "APPROVED" in t["say"] and "She declined it" in t["say"] and t["result"]["intact"] is False
+    assert client.get("/api/carbon").json()["session"] == hold["session"]
+
+
+def test_observe_book_has_no_owner_action_and_the_off_tamper_acts_on_it(client):
+    _start_both(client, ("enforce", "observe"))
+    off = client.get("/api/carbon", params={"mode": "observe"}).json()
+    assert all(r["kind"] != "owner" for r in off["receipts"])
+    t = client.post("/api/carbon/tamper", params={"mode": "observe"}).json()
+    assert t["result"]["intact"] is False and "declined" not in t["say"]
+
+
+def test_with_only_an_observe_run_the_default_falls_back_to_it(client):
+    line = _lines(client)
+    client.get("/api/replay", params={"line": line, "speed": 100, "mode": "observe"})
+    book = client.get("/api/carbon").json()
+    assert book["mode"] == "observe" and book["has_twin"] is False
+    assert client.get("/api/carbon", params={"mode": "enforce"}).json()["receipts"] == []
+
+
+def test_a_bad_mode_is_refused(client):
+    assert client.get("/api/carbon", params={"mode": "sideways"}).status_code == 400
+    assert client.post("/api/carbon/tamper", params={"mode": "sideways"}).status_code == 400
