@@ -21,10 +21,10 @@
   - [x] 4.2 Integration test: one scenario on the stand-in gives an intact book with one receipt per event
   - _Requirements: 1, 8_
 
-- [ ] 5. The app
-  - [ ] 5.1 `GET /api/carbon`, `POST /api/carbon/verify`, `POST /api/carbon/tamper`, with tests
-  - [ ] 5.2 The *Carbon copy* tab: the receipt list in plain words, *Check the book*, *Try to change one*, *Download the carbon copies*
-  - [ ] 5.3 Receipt number and fingerprint columns in the accountant's download
+- [x] 5. The app
+  - [x] 5.1 `GET /api/carbon`, `POST /api/carbon/verify`, `POST /api/carbon/tamper`, with tests
+  - [x] 5.2 The *Carbon copy* tab: the receipt list in plain words, *Check the book*, *Try to change one*, *Download the carbon copies*
+  - [x] 5.3 Receipt number and fingerprint columns in the accountant's download
   - _Requirements: 6_
 
 - [ ] 6. README and Kiro write-up sections for Carbon Copy, disclosing the Receipts base

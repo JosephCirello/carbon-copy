@@ -35,6 +35,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from receipts.agent import run_episode
+from receipts.carbon import CarbonCopy, Signer, tamper_demo, verify as carbon_verify
 from receipts.compiler import FIELDS, ai_compile
 from receipts.core import Receipts
 from receipts.paypal import make_paypal
@@ -246,9 +247,13 @@ def _sse(q: queue.Queue):
         yield f"data: {json.dumps(ev, default=str)}\n\n"
 
 
-def _register(r: Receipts, q: queue.Queue, sid: str, visitor: Visitor):
+def _register(r: Receipts, q: queue.Queue, sid: str, visitor: Visitor, source: str = "live run"):
+    """Keep the run with its own carbon-copy book (a live run gets it here, before its first event; a replay
+    built its Receipts with one already) and the stamps the owner's phone is handed."""
+    if r.carbon is None:
+        r.carbon = CarbonCopy(Signer.from_env())
     with _VISITORS_LOCK:
-        visitor.sessions[sid] = {"r": r, "t": time.time()}
+        visitor.sessions[sid] = {"sid": sid, "r": r, "t": time.time(), "carbon": r.carbon, "stamps": [], "source": source}
         while len(visitor.sessions) > MAX_SESSIONS_PER_VISITOR:
             visitor.sessions.pop(next(iter(visitor.sessions)))
     q.put({"type": "session", "session": sid, "mode": r.mode, "backend": r.paypal.backend, "note": getattr(r.paypal, "note", None)})
@@ -280,7 +285,8 @@ def run(request: Request, scenario: str, model: str, mode: str = "enforce"):
         try:
             rec = run_episode(BY_ID[scenario], model, mode=mode, on_event=q.put, policy=policy,
                               on_start=lambda r: _register(r, q, sid, visitor))
-            visitor.live_ledger.extend(_ledger_from(rec, live=True))
+            entry = visitor.sessions.get(sid)
+            visitor.live_ledger.extend(_ledger_from(rec, live=True, book=entry["carbon"] if entry else None))
             q.put({"type": "done", "outcome": rec["outcome"], "seconds": rec["seconds"], "error": rec["error"]})
         except Exception as e:  # noqa: BLE001
             q.put({"type": "error", "msg": f"{type(e).__name__}: {e}"[:300]})
@@ -367,8 +373,8 @@ def replay(request: Request, line: int, speed: float = 1.0, mode: str | None = N
     def work():
         try:
             pp = make_paypal(scn.get("paypal", {}), scn["id"])
-            r = Receipts(scn, pp, mode=use_mode, policy=policy, on_event=q.put)
-            _register(r, q, sid, visitor)
+            r = Receipts(scn, pp, mode=use_mode, policy=policy, on_event=q.put, carbon=CarbonCopy(Signer.from_env()))
+            _register(r, q, sid, visitor, source="recorded run, replayed")
             q.put({"type": "replay", "model": rec["model"], "recorded_at": rec.get("ts"), "recorded_mode": rec["mode"], "mode": use_mode})
             # Recorded against the stand-in; in the sandbox the same orders carry real PayPal ids.
             # Both are keyed by the same names ("A.capture_id"), so recorded ids translate one to one.
@@ -453,12 +459,25 @@ def reset(request: Request):
     return {"reset": True}
 
 
+def _keep_stamp(request: Request, sid: str, out) -> None:
+    """The phone keeps the stamp handed over with the tap, in this run's session."""
+    v = _visitor(request)
+    stamp = out.get("stamp") if isinstance(out, dict) else None
+    if v and stamp:
+        with _VISITORS_LOCK:
+            s = v.sessions.get(sid)
+            if s is not None:
+                s["stamps"].append(stamp)
+
+
 @app.post("/api/approve")
 def approve(body: HoldIn, request: Request):
     r = _sessions(request).get(body.session)
     if not r:
         raise HTTPException(404, "session expired")
-    return r.approve(body.hold_id)
+    out = r.approve(body.hold_id)
+    _keep_stamp(request, body.session, out)
+    return out
 
 
 @app.post("/api/decline")
@@ -466,10 +485,62 @@ def decline(body: HoldIn, request: Request):
     r = _sessions(request).get(body.session)
     if not r:
         raise HTTPException(404, "session expired")
-    return r.decline(body.hold_id)
+    out = r.decline(body.hold_id)
+    _keep_stamp(request, body.session, out)
+    return out
 
 
-def _ledger_from(rec: dict, live: bool = False):
+# ---- the carbon-copy book -------------------------------------------------------------------------------
+def _carbon_session(request: Request, sid: str | None) -> dict | None:
+    """This visitor's run with that id, or (no id) their most recent one. Only their own runs, never another's."""
+    v = _visitor(request)
+    with _VISITORS_LOCK:
+        mine = dict(v.sessions) if v else {}
+    if sid is None:
+        return next(iter(reversed(mine.values())), None)
+    return mine.get(sid)
+
+
+@app.get("/api/carbon")
+def carbon_book(request: Request, sid: str | None = None):
+    s = _carbon_session(request, sid)
+    if s is None:
+        if sid is not None:
+            raise HTTPException(404, "session expired")
+        return {"public_key": None, "head": None, "receipts": [], "stamps": [], "source": None, "session": None}
+    with _VISITORS_LOCK:
+        stamps = copy.deepcopy(s["stamps"])
+    return {**s["carbon"].book(), "stamps": stamps, "source": s["source"], "session": s["sid"]}
+
+
+class VerifyIn(BaseModel):
+    book: dict
+    stamps: list = []
+
+
+@app.post("/api/carbon/verify")
+def carbon_verify_book(body: VerifyIn):
+    try:
+        return carbon_verify(body.book, body.stamps)
+    except Exception:  # noqa: BLE001  a file that is not a book fails closed
+        return {"intact": False, "count": 0, "first_bad": 1, "why": "this is not a carbon-copy book we can read"}
+
+
+@app.post("/api/carbon/tamper")
+def carbon_tamper(request: Request, sid: str | None = None):
+    """Change one value in a COPY of the book and show the check catching it. The real book is never touched."""
+    s = _carbon_session(request, sid)
+    if s is None:
+        raise HTTPException(404, "no run to copy yet")
+    return tamper_demo(s["carbon"].book())
+
+
+def _ledger_from(rec: dict, live: bool = False, book: CarbonCopy | None = None):
+    """Ledger rows for one run. With its book, each row also carries the number and fingerprint of the receipt
+    for its verdict; rows read from the recorded results files have no book and leave both blank."""
+    by_id = {}
+    if book is not None:
+        by_id = {r["event"].get("id"): r for r in book.receipts() if r["kind"] == "verdict"}
     rows = []
     for v in rec.get("verdicts", []):
         a = v["args"]
@@ -483,7 +554,8 @@ def _ledger_from(rec: dict, live: bool = False):
                      "said_first": v.get("words_class") == "SAID_NO_DID_IT",
                      "paypal_id": next((l.get("paypal_id") for l in rec["outcome"].get("ledger", [])
                                         if str(l.get("ref", "")).upper() == str(a.get("invoice_number", "")).upper()), None),
-                     "backend": rec.get("paypal_backend"), "live": live})
+                     "backend": rec.get("paypal_backend"), "live": live,
+                     "receipt_n": (by_id.get(v.get("id")) or {}).get("n"), "fp": (by_id.get(v.get("id")) or {}).get("fp")})
     return rows
 
 

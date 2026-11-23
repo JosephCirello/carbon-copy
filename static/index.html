@@ -5,10 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Receipts</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&family=Special+Elite&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ag-grid-community@32.3.3/styles/ag-grid.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ag-grid-community@32.3.3/styles/ag-theme-quartz.css">
-<link rel="stylesheet" href="/static/style.css?v=2026-11-10f">
+<link rel="stylesheet" href="/static/style.css?v=2026-11-24a">
 <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 </head>
 <body>
@@ -25,6 +25,7 @@
     <button data-tab="owner" title="Where Receipts asks Maya when something looks wrong">Maya's phone <span class="count" id="holdCount" hidden>0</span></button>
     <button data-tab="rules" title="Maya's rules in her own words, and what Receipts enforces">Her rules</button>
     <button data-tab="ledger" title="Every money move any AI tried, and what Receipts did">Her book</button>
+    <button data-tab="carbon" title="Every move the AI made, sealed so nobody can quietly change it">Carbon copy</button>
     <button data-tab="results" title="What we measured: 19 AI models, 19 business days">Results</button>
   </nav>
   <div class="env" id="env">PayPal: …</div>
@@ -134,6 +135,24 @@
     <div id="grid" class="ag-theme-quartz grid"></div>
   </section>
 
+  <!-- CARBON COPY -->
+  <section id="tab-carbon" class="tab">
+    <div class="cc-wrap">
+      <div class="cc-head">
+        <h2>The carbon copies</h2>
+        <p class="cc-sub" id="ccSub"></p>
+        <div class="cc-tools">
+          <button class="go" id="ccCheck">Check the book</button>
+          <button class="go" id="ccTamper">Try to change one</button>
+          <button class="go" id="ccDownload">Download the carbon copies</button>
+          <label class="chk"><input type="checkbox" id="ccDev"> Developer view</label>
+        </div>
+        <div class="cc-result" id="ccResult" aria-live="polite"></div>
+      </div>
+      <div class="cc-book" id="ccBook"></div>
+    </div>
+  </section>
+
   <!-- RESULTS -->
   <section id="tab-results" class="tab">
     <div id="resultsBody"></div>
@@ -141,6 +160,6 @@
 </main>
 
 <script src="https://cdn.jsdelivr.net/npm/ag-grid-community@32.3.3/dist/ag-grid-community.min.js"></script>
-<script src="/static/app.js?v=2026-11-10i"></script>
+<script src="/static/app.js?v=2026-11-24a"></script>
 </body>
 </html>

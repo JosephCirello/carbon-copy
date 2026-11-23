@@ -70,8 +70,24 @@ Deep-copies the book, changes one value in one receipt's event (the amount if th
 
 ## The screen
 
-A *Carbon copy* tab styled as a carbon-paper receipt book (a Halloween touch: faint blue carbon on dark paper, a wax seal when the book checks out, a torn seal when it does not). Each row: number, time, a plain sentence (*"Held: payout of $1,836.00 to Ashwood Timber, invoice INV-AT-1142. PayPal already shows a payment for it on its way."*), short fingerprint. Two buttons: *Check the book*, *Try to change one*. A *Download the carbon copies* link.
+A *Carbon copy* tab, the sixth, after *Her book*, with the tooltip "Every move the AI made, sealed so nobody can quietly change it". It shows the current session's receipts, newest last. With no run yet it says: "Run Maya's day on the Watch tab first. Every move the AI makes will be copied here."
 
+**No drawn pictures.** No wax seal image, no SVG, no line art. The verdict is a stamped word set in type: "INTACT" in green, or "CHANGED AT #7" (the first bad receipt) in red. The stamp is rotated about -6 degrees and has a double border, like a rubber stamp.
+
+**The Halloween touch is type and colour only.** Dark paper background, receipt text in a faint carbon blue, and a typewriter face from Google Fonts: Special Elite for the receipts, the app's existing font for the buttons. Each receipt row is separated by a perforated dashed line.
+
+**Plain words first.** Each row is one sentence an owner can read, built from the event. For example: "Held for Maya: a $1,836.00 payout to Ashwood Timber Co. for INV-AT-1142. Why: PayPal already shows a payment for this bill on its way." After the sentence come the receipt number, the time, and the first 10 characters of the fingerprint. A *Developer view* toggle shows the raw receipt JSON instead.
+
+Three buttons:
+- *Check the book* calls `POST /api/carbon/verify` and shows the stamp.
+- *Try to change one* calls `POST /api/carbon/tamper` and says in plain words what was changed in a copy ("We changed receipt #7 from $1,836.00 to $18.36 in a copy of the book"), then shows the red stamp naming that receipt.
+- *Download the carbon copies* saves a JSON file with the book and the phone's stamps.
+
+On *Maya's phone*, after an approve or decline, one line: "Your phone kept stamp #N: the book had N receipts."
+
+Server: every Receipts object the app builds (live runs and recorded replays) gets its own `CarbonCopy` with `Signer.from_env()`, kept with the session. The stamps returned by `approve()` and `decline()` are kept with the session and returned in the `/api/approve` and `/api/decline` responses. `GET /api/carbon?sid=` returns the book plus `stamps` and `source` ("live run" or "recorded run, replayed"). `POST /api/carbon/verify` takes `{"book", "stamps"}`. `POST /api/carbon/tamper?sid=` returns `tamper_demo` of a copy and never changes the real book.
+
+The accountant's download from *Her book* gains *Receipt #* and *Fingerprint* columns, filled for rows from a session that has a book and blank for rows read from the recorded results files.
 ## Testing
 
 - Unit tests for the canonical form, the first receipt, signing and each failure reason.

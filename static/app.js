@@ -14,6 +14,7 @@ function showTab(t) {
   if (t === "ledger") loadLedger();
   if (t === "results") loadResults();
   if (t === "rules") loadPolicy();
+  if (t === "carbon") loadCarbon();
   if (t === "owner") pollHolds();
   history.replaceState(null, "", location.search + "#" + t);
   window.scrollTo(0, 0);                       // a new tab opens at its top, not at the last tab's scroll position
@@ -286,6 +287,7 @@ const LOGO = `<svg viewBox="0 0 100 100" aria-hidden="true"><rect width="100" he
 const EXPIRED_TEXT = "This one has expired, because the demo restarted or it waited too long. Go back to Watch and press Run the day again.";
 const NO_HOLDS = $("#holds").innerHTML;          // the phone with nothing on it, as the page ships it
 const holdKey = (h) => h.session + "/" + h.id;
+const PHONE_STAMPS = {};                         // hold key -> how many receipts the book had at the stamp the phone kept
 let SHOWN = [];                                  // the held payments the server lists for this visitor, as last heard
 let GONE = [];                                   // ones that were waiting on the phone and are no longer on the server
 let HOLDS_ASKED = 0, HOLDS_DRAWN = 0;            // answers are drawn in the order they were asked for, never an older one over a newer
@@ -296,7 +298,7 @@ function holdTitle(h) {
 function holdCard(h) {
   return `<div class="hold"><div class="nt">${LOGO}<span>RECEIPTS</span><span class="when">${h.status === "WAITING" ? "needs you" : "done"}</span></div><div class="ttl">${esc(holdTitle(h))} · ${esc(h.scenario)}</div><div class="amt">${usd(h.amount)}</div><ul>${(h.why || []).map((w) => `<li>${esc(w)}</li>`).join("")}</ul>${h.status === "WAITING"
     ? `<div class="btns"><button class="approve" data-s="${h.session}" data-h="${h.id}">Approve</button><button class="decline" data-s="${h.session}" data-h="${h.id}">Decline</button></div>`
-    : `<div class="state ${h.status}">${h.status === "APPROVED" ? `Approved · sent to PayPal ${esc((h.result || {}).backend || "")} · ${esc((h.result || {}).payout_batch_id || (h.result || {}).id || "")} · ${esc((h.result || {}).batch_status || (h.result || {}).status || "")}` : "Declined · never sent to PayPal"}</div>`}</div>`;
+    : `<div class="state ${h.status}">${h.status === "APPROVED" ? `Approved · sent to PayPal ${esc((h.result || {}).backend || "")} · ${esc((h.result || {}).payout_batch_id || (h.result || {}).id || "")} · ${esc((h.result || {}).batch_status || (h.result || {}).status || "")}` : "Declined · never sent to PayPal"}</div>`}${PHONE_STAMPS[holdKey(h)] != null ? `<p class="phone-stamp">Your phone kept stamp #${PHONE_STAMPS[holdKey(h)]}: the book had ${PHONE_STAMPS[holdKey(h)]} receipts.</p>` : ""}</div>`;
 }
 function expiredCard(h) {
   return `<div class="hold expired" role="status"><div class="nt">${LOGO}<span>RECEIPTS</span><span class="when">expired</span></div><div class="ttl">${esc(holdTitle(h))} · ${esc(h.scenario)}</div><div class="amt">${usd(h.amount)}</div><p class="gone">${EXPIRED_TEXT}</p><button class="to-watch">Back to Watch</button></div>`;
@@ -314,7 +316,7 @@ function drawHolds() {
   const waiting = SHOWN.filter(isWaiting).length;
   $("#holdCount").hidden = !waiting; $("#holdCount").textContent = waiting;
   const box = $("#holds");
-  const sig = JSON.stringify([SHOWN.map((h) => [h.session, h.id, h.status]), GONE.map(holdKey)]);
+  const sig = JSON.stringify([SHOWN.map((h) => [h.session, h.id, h.status]), GONE.map(holdKey), PHONE_STAMPS]);
   if (sig === box.dataset.sig) return;          // unchanged: do not re-render (keeps the cards steady)
   box.dataset.sig = sig;
   if (!SHOWN.length && !GONE.length) { box.innerHTML = NO_HOLDS; return; }
@@ -329,6 +331,10 @@ function drawHolds() {
       const card = b.closest(".hold");
       if (card && !card.querySelector(".retry")) card.insertAdjacentHTML("beforeend", `<p class="retry" role="status">That tap did not reach the demo. Check your connection and tap again.</p>`);
       return;
+    }
+    if (res.ok) {
+      const j = await res.json().catch(() => null);
+      if (j && j.stamp && Number.isInteger(j.stamp.count)) PHONE_STAMPS[b.dataset.s + "/" + b.dataset.h] = j.stamp.count;
     }
     if (!res.ok) expireHold(b.dataset.s, b.dataset.h);      // the server no longer has this payment (404 after a restart)
     pollHolds();
@@ -353,6 +359,99 @@ async function pollHolds() {
   drawHolds();
 }
 
+/* ---------- carbon copy ---------- */
+let CC = null;                                   // the book last fetched for this visitor's current run
+const CC_EMPTY = "Run Maya's day on the Watch tab first. Every move the AI makes will be copied here.";
+const PP_NAME = (b) => (b === "sandbox" ? "PayPal sandbox" : "PayPal stand-in");
+const TOOL_PLAIN = { create_payout: "a payout", create_refund: "a refund", accept_dispute_claim: "giving in on a dispute" };
+function ccWhat(ev) {                            // what a money move was, in a few words
+  const a = ev.args || {}, amt = ev.amount != null ? usd(ev.amount) : null;
+  if (ev.tool === "create_payout") return `${amt ? "a " + amt + " payout" : "a payout"} to ${a.vendor || a.receiver_email || "a supplier"}${a.invoice_number ? " for " + a.invoice_number : ""}`;
+  if (ev.tool === "create_refund") return `${amt ? "a " + amt + " refund" : "a refund"} on ${a.capture_id || "a sale"}`;
+  if (ev.tool === "accept_dispute_claim") return `giving in on dispute ${a.dispute_id || ""}${amt ? " (" + amt + ")" : ""}`.trim();
+  return TOOL_PLAIN[ev.tool] || String(ev.tool || "a move");
+}
+function ccSentence(r) {                         // one plain sentence for one receipt, built from the event
+  const e = r.event || {};
+  const clip = (s, n) => { s = String(s || "").replace(/\s+/g, " ").trim(); return s.length > n ? s.slice(0, n - 1) + "…" : s; };
+  switch (r.kind) {
+    case "verdict": {
+      const why = (e.findings || []).map((f) => f.why).filter(Boolean).join(" ");
+      const off = e.mode === "observe" && e.decision !== "ALLOW";
+      const head = e.decision === "ALLOW" ? "Allowed" : e.decision === "HOLD" ? (off ? "Receipts was off. It would have held for Maya" : "Held for Maya") : (off ? "Receipts was off. It would have stopped" : "Stopped");
+      return `${head}: ${ccWhat(e)}.` + (e.decision === "ALLOW" ? " Nothing in PayPal or Maya's records said otherwise." : why ? ` Why: ${why}` : "");
+    }
+    case "paypal": return `Sent to ${PP_NAME(e.backend)}: ${esc0(TOOL_PLAIN[e.tool] || String(e.tool || "a request").replace(/_/g, " "))}.`;
+    case "desk": return e.tool === "read_inbox" ? "The AI read Maya's inbox." : `The AI looked something up: ${String(e.tool || "").replace(/_/g, " ")}.`;
+    case "say": return `The AI wrote${e.marker ? " (" + String(e.marker).toLowerCase().replace(/_/g, " ") + ")" : ""}: “${clip(e.text, 220)}”`;
+    case "report": {
+      const rp = e.report || {}, n = (k) => (Array.isArray(rp[k]) ? rp[k].length : 0);
+      return `The AI's end-of-day report: ${n("paid_invoices")} paid, ${n("held")} held, ${n("refunded_orders")} refunded, ${n("accepted_disputes")} disputes given in on.`;
+    }
+    case "owner": return e.action === "approved" ? "Maya approved a held payment. It went to PayPal." : e.action === "declined" ? "Maya declined a held payment. It never went to PayPal." : "Maya acted on a held payment.";
+    default: return `Something happened: ${esc0(r.kind)}.`;
+  }
+}
+const esc0 = (s) => String(s ?? "");
+function ccStamp(res) {                          // the rubber stamp: a word in type, never a picture
+  return res.intact ? `<div class="stamp ok" role="img" aria-label="The book is intact">INTACT</div>`
+    : `<div class="stamp bad" role="img" aria-label="The book was changed at receipt ${esc(res.first_bad)}">CHANGED AT #${esc(res.first_bad)}</div>`;
+}
+function ccFmt(field, v) { return field === "amount" && typeof v === "number" ? usd(v) : typeof v === "object" ? JSON.stringify(v) : String(v); }
+function drawCarbon() {
+  const box = $("#ccBook"), has = CC && CC.receipts && CC.receipts.length;
+  const hasBook = !!has;
+  ["#ccCheck", "#ccTamper", "#ccDownload"].forEach((s) => ($(s).disabled = !hasBook));
+  if (!hasBook) {
+    $("#ccSub").textContent = CC_EMPTY;
+    $("#ccResult").innerHTML = ""; box.innerHTML = "";
+    return;
+  }
+  const mode = META.paypal_mode === "sandbox" ? "PayPal sandbox" : "PayPal stand-in (no real money, no PayPal account)";
+  $("#ccSub").textContent = `${CC.receipts.length} receipts from a ${CC.source}. PayPal here: ${mode}.`;
+  const dev = $("#ccDev").checked;
+  box.innerHTML = CC.receipts.map((r) => dev
+    ? `<div class="cc-row"><pre class="cc-json">${esc(JSON.stringify(r, null, 2))}</pre></div>`
+    : `<div class="cc-row"><div class="cc-line">${esc(ccSentence(r))}</div><div class="cc-meta">Receipt #${r.n} · ${esc(new Date(r.at * 1000).toLocaleTimeString())} · fingerprint ${esc(String(r.fp).slice(0, 10))}</div></div>`).join("");
+}
+async function loadCarbon() {
+  try {
+    const res = await fetch("/api/carbon");
+    if (!res.ok) return;
+    const b = await res.json();
+    if (!CC || CC.session !== b.session || (CC.receipts || []).length !== (b.receipts || []).length || (CC.stamps || []).length !== (b.stamps || []).length) $("#ccResult").innerHTML = "";
+    CC = b;
+  } catch { return; }
+  drawCarbon();
+}
+function bookParts() {
+  return { book: { public_key: CC.public_key, head: CC.head, receipts: CC.receipts }, stamps: CC.stamps || [] };
+}
+$("#ccDev").addEventListener("change", drawCarbon);
+$("#ccCheck").addEventListener("click", async () => {
+  if (!CC) return;
+  const res = await fetch("/api/carbon/verify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(bookParts()) });
+  if (!res.ok) { $("#ccResult").textContent = "The check did not run. Try again."; return; }
+  const out = await res.json();
+  $("#ccResult").innerHTML = ccStamp(out) + `<p class="cc-say">${out.intact ? `All ${out.count} receipts are as they were written.` : esc(out.why || "")}</p>`;
+});
+$("#ccTamper").addEventListener("click", async () => {
+  if (!CC) return;
+  const res = await fetch("/api/carbon/tamper" + (CC.session ? "?sid=" + encodeURIComponent(CC.session) : ""), { method: "POST" });
+  if (!res.ok) { $("#ccResult").textContent = "There is nothing to change yet."; return; }
+  const t = await res.json(), r = t.result || {};
+  const what = t.n == null ? "" : `<p class="cc-say">We changed receipt #${esc(t.n)} from ${esc(ccFmt(t.field, t.before))} to ${esc(ccFmt(t.field, t.after))} in a copy of the book. The real book was not touched.</p>`;
+  $("#ccResult").innerHTML = what + ccStamp(r) + `<p class="cc-say">${esc(r.why || "")}</p>`;
+});
+$("#ccDownload").addEventListener("click", () => {
+  if (!CC) return;
+  const blob = new Blob([JSON.stringify(bookParts(), null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `carbon_copies_${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+});
 /* ---------- rules ---------- */
 let DRAFT = null;
 async function loadPolicy() {
@@ -469,6 +568,8 @@ async function loadLedger() {
         { field: "why", headerName: "Why (built from PayPal and the records)", flex: 1, minWidth: 380, tooltipField: "why", filter: true },
         { field: "paypal_id", headerName: "PayPal id", width: 170 },
         { field: "backend", headerName: "PayPal", width: 110, filter: true, valueFormatter: (p) => (p.value === "standin" ? "stand-in" : p.value || "") },
+        { field: "receipt_n", headerName: "Receipt #", width: 120, type: "rightAligned" },
+        { field: "fp", headerName: "Fingerprint", width: 200, valueFormatter: (p) => (p.value ? String(p.value).slice(0, 10) : ""), tooltipField: "fp" },
       ],
       defaultColDef: { sortable: true, resizable: true, floatingFilter: true, suppressHeaderMenuButton: true },
       animateRows: true,

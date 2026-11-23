@@ -92,7 +92,8 @@ def test_a_visitor_cannot_decide_anothers_held_payment(clients):
     assert b.post("/api/approve", json=body).status_code == 404
     assert b.post("/api/decline", json=body).status_code == 404
     assert waiting(a) == [h]                                        # still waiting for its owner
-    assert a.post("/api/decline", json=body).json() == {"declined": h["id"]}
+    out = a.post("/api/decline", json=body).json()
+    assert out["declined"] == h["id"] and out["stamp"]["count"] >= 1      # the phone is handed the book's signed count with the tap
     assert waiting(a) == [] and a.get("/api/holds").json()[0]["status"] == "DECLINED"
 
 
