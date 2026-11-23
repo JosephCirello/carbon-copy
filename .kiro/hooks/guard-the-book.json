@@ -1,0 +1,22 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Keep the book append-only",
+      "description": "When the agent edits the carbon-copy module, remind it of the rule that receipts are never changed or deleted.",
+      "trigger": "PostFileSave",
+      "matcher": "receipts[\\\\/]carbon\\.py$",
+      "action": {
+        "type": "agent",
+        "prompt": "You just changed receipts/carbon.py. Check: is there now any function or code path that edits, reorders or deletes a receipt in the real book, or that lets a model's output become a verdict? If yes, remove it. Only append() may write to the book, and tamper_demo() must work on a deep copy."
+      }
+    },
+    {
+      "name": "No keys in the repo",
+      "description": "Before the agent writes any file, refuse one that looks like it holds a private key or seed.",
+      "trigger": "PostFileSave",
+      "matcher": ".*",
+      "action": { "type": "command", "command": ".venv\\Scripts\\python.exe tools\\no_keys.py" }
+    }
+  ]
+}
