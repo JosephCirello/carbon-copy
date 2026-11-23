@@ -38,16 +38,33 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 GENESIS = "0" * 64
 
 
+def normalise(x):
+    """The value with every whole-number float turned into an int, recursively.
+
+    A browser writes 1836.0 as 1836, so the same number must hash the same either
+    way. Tuples become lists; dicts and lists are rebuilt (the input is not
+    changed); anything else is returned as it is and left to ``canonical``.
+    """
+    if isinstance(x, float):
+        return int(x) if x.is_integer() else x
+    if isinstance(x, dict):
+        return {k: normalise(v) for k, v in x.items()}
+    if isinstance(x, (list, tuple)):
+        return [normalise(v) for v in x]
+    return x
+
+
 def canonical(x) -> bytes:
     """The stable byte form of any JSON-shaped value.
 
-    Keys are sorted, there are no spaces, text stays as UTF-8 (no ``\\u`` escapes)
-    and anything JSON cannot represent is read through ``str``. Two values that
-    mean the same thing always produce the same bytes on any machine, so the
-    fingerprint can never depend on dict order, float formatting or platform.
+    The value is normalised first (see :func:`normalise`). Keys are sorted, there
+    are no spaces, text stays as UTF-8 (no ``\\u`` escapes) and anything JSON
+    cannot represent is read through ``str``. Two values that mean the same thing
+    always produce the same bytes on any machine, so the fingerprint can never
+    depend on dict order, float formatting or platform.
     """
     return json.dumps(
-        x, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str
+        normalise(x), sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str
     ).encode("utf-8")
 
 
@@ -125,7 +142,8 @@ class CarbonCopy:
         """
         n = len(self._receipts) + 1
         at = round(event.get("t", time.time()), 3)
-        ev = copy.deepcopy({k: v for k, v in event.items() if k != "t"})
+        # normalised, so what is hashed is exactly what is stored and handed out
+        ev = normalise(copy.deepcopy({k: v for k, v in event.items() if k != "t"}))
         prev = self._receipts[-1]["fp"] if self._receipts else GENESIS
         fp = fingerprint({"n": n, "at": at, "kind": kind, "event": ev, "prev": prev})
         receipt = {
@@ -340,8 +358,8 @@ def _main(argv=None) -> int:
 
     if args.command == "verify":
         try:
-            book = json.loads(Path(args.book).read_text(encoding="utf-8"))
-            stamps = json.loads(Path(args.stamps).read_text(encoding="utf-8")) if args.stamps else None
+            book = json.loads(Path(args.book).read_text(encoding="utf-8-sig"))
+            stamps = json.loads(Path(args.stamps).read_text(encoding="utf-8-sig")) if args.stamps else None
         except (OSError, json.JSONDecodeError) as exc:
             print(f"could not read the book: {exc}", file=sys.stderr)
             return 1

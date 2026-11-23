@@ -91,3 +91,26 @@ def test_a_decline_stamp_is_kept_too(client):
 def test_a_file_that_is_not_a_book_fails_closed(client):
     out = client.post("/api/carbon/verify", json={"book": {"receipts": "x"}, "stamps": []}).json()
     assert out["intact"] is False
+
+
+def _browser_like(x):
+    """JSON.parse then JSON.stringify in a browser: a whole-number float 1836.0 comes back as 1836."""
+    import json
+
+    def whole_to_int(v):
+        if isinstance(v, float):
+            return int(v) if v.is_integer() else v
+        if isinstance(v, dict):
+            return {k: whole_to_int(w) for k, w in v.items()}
+        if isinstance(v, list):
+            return [whole_to_int(w) for w in v]
+        return v
+    return whole_to_int(json.loads(json.dumps(x)))
+
+
+def test_a_book_sent_through_a_browser_still_verifies_intact(client):
+    sid = replay(client)
+    book = client.get("/api/carbon", params={"sid": sid}).json()
+    sent = _browser_like(book)
+    out = client.post("/api/carbon/verify", json={"book": sent, "stamps": sent["stamps"]}).json()
+    assert out == {"intact": True, "count": len(book["receipts"])}

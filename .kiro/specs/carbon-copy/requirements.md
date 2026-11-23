@@ -21,6 +21,7 @@ An AI agent pays a small business's bills through PayPal. Receipts (the base) al
 1. EACH receipt SHALL hold: its number in the book (starting at 1), the time, the kind of event, the event itself, the fingerprint of the receipt before it (64 zeros for the first), its own fingerprint, and a signature over its own fingerprint.
 2. A receipt's fingerprint SHALL be the SHA-256 of the canonical JSON of its number, time, kind, event and previous fingerprint.
 3. THE SYSTEM SHALL produce the same fingerprint for the same receipt on any machine.
+4. THE fingerprint SHALL be the same after the book passes through any standard JSON reader and writer, including a web browser's, which writes a whole-number float such as 1836.0 as 1836.
 
 ### Requirement 3: append only
 

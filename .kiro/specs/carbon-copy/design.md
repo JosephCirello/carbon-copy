@@ -20,6 +20,8 @@ One new module, `receipts/carbon.py`, holds the book and the check. `Receipts.em
 
 - `fp = sha256(canonical({"n","at","kind","event","prev"}))`
 - `canonical(x) = json.dumps(x, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str).encode("utf-8")`
+- `canonical()` first normalises the value: every float with no fractional part becomes an int, recursively through dicts and lists; tuples become lists; anything else JSON cannot hold goes through `str` as before. A browser writes 1836.0 as 1836, so without this the same number would give different bytes after a trip through `JSON.parse` and `JSON.stringify`.
+- `append()` stores the NORMALISED event, so what is hashed is exactly what is stored and handed out. `verify()` normalises before hashing too, so books signed before this change still check out when they hold no whole-number floats.
 - `at` is rounded to milliseconds before hashing, so the stored value and the hashed value are the same number.
 - The first receipt's `prev` is `"0" * 64`.
 
@@ -56,7 +58,7 @@ Returns `{"intact": true, "count": N}` or `{"intact": false, "count": N, "first_
 Deep-copies the book, changes one value in one receipt's event (the amount if there is one), runs `verify` on the copy and returns the before/after values and the result. Never touches the real book.
 
 ### Command line
-`python -m receipts.carbon verify path/to/book.json [--stamps path/to/stamps.json]` prints the result — *intact* with the count, or the first changed receipt in plain words — and exits 0 when intact, 1 when changed. When `--stamps` is given it loads the JSON list of the owner's phone stamps and passes them to `verify`.
+`python -m receipts.carbon verify path/to/book.json [--stamps path/to/stamps.json]` prints the result — *intact* with the count, or the first changed receipt in plain words — and exits 0 when intact, 1 when changed. When `--stamps` is given it loads the JSON list of the owner's phone stamps and passes them to `verify`. Files are opened as `utf-8-sig`, so a book saved with a byte-order mark (Windows PowerShell 5.1 and Notepad write one) is read too.
 
 ## Wiring
 

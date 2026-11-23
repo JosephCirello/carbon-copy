@@ -717,3 +717,49 @@ def test_cli_applies_the_stamps_and_flags_a_short_book(tmp_path):
     proc = _run_cli(bp, sp)                                       # with stamps the phone catches the rollback
     assert proc.returncode == 1
     assert "the book is shorter than a stamp the owner's phone already holds" in proc.stdout
+
+
+# ---- whole-number floats survive a browser round trip ----------------------------------------
+
+def _browser_like(x):
+    """What a browser does to a book: JSON.parse then JSON.stringify writes 1836.0 as 1836."""
+    def whole_to_int(v):
+        if isinstance(v, float):
+            return int(v) if v.is_integer() else v
+        if isinstance(v, dict):
+            return {k: whole_to_int(w) for k, w in v.items()}
+        if isinstance(v, list):
+            return [whole_to_int(w) for w in v]
+        return v
+    return whole_to_int(json.loads(json.dumps(x)))
+
+
+def test_a_whole_number_float_survives_a_browser_round_trip():
+    event = {"type": "verdict", "decision": "HOLD", "amount": 1836.0, "fee": 298.5}
+    book = _book(("verdict", event))
+    assert book["receipts"][0]["event"]["amount"] == 1836.0
+    sent = _browser_like(book)
+    assert sent["receipts"][0]["event"]["amount"] == 1836
+    assert isinstance(sent["receipts"][0]["event"]["amount"], int)
+    assert verify(sent) == {"intact": True, "count": 1}
+
+
+def test_canonical_gives_the_same_bytes_for_1836_and_1836_point_0():
+    assert canonical({"a": 1836.0, "b": (1, 2.0)}) == canonical({"a": 1836, "b": [1, 2]})
+    assert canonical({"a": 298.5}) == b'{"a":298.5}'
+
+
+@given(pairs=_PAIRS)
+@settings(max_examples=100, deadline=None)
+def test_property_any_book_survives_the_browser_round_trip(pairs):
+    book = _book(*pairs)
+    assert verify(_browser_like(book)) == {"intact": True, "count": len(pairs)}
+
+
+def test_the_command_line_reads_a_book_saved_with_a_byte_order_mark(tmp_path):
+    book = _book(("verdict", E1), ("owner", E3))
+    p = tmp_path / "book.json"
+    p.write_text(json.dumps(book), encoding="utf-8-sig")
+    assert p.read_bytes().startswith(b"\xef\xbb\xbf")
+    done = _run_cli(p)
+    assert done.returncode == 0 and "intact" in done.stdout
