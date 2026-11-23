@@ -7,3 +7,5 @@ mcp>=2.3
 pydantic
 pytest
 playwright
+cryptography
+hypothesis
