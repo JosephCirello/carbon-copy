@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Receipts</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ag-grid-community@32.3.3/styles/ag-grid.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ag-grid-community@32.3.3/styles/ag-theme-quartz.css">
+<link rel="stylesheet" href="/static/style.css?v=2026-11-10f">
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <svg class="logo" viewBox="0 0 100 100" aria-hidden="true"><rect width="100" height="100" rx="22" fill="var(--ink)"/><path d="M26 84V16h21c15 0 24 8 24 21s-9 21-24 21H26m17 0l30 26" fill="none" stroke="var(--paper)" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/><path d="M55 70l12 12 26-28" fill="none" stroke="var(--ok)" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <div>
+      <div class="name">Receipts</div>
+      <div class="tag">If your AI agent moves money on PayPal, make it show its receipts.</div>
+    </div>
+  </div>
+  <nav class="tabs" id="tabs">
+    <button data-tab="live" class="on" title="Watch an AI work Maya's day, with and without Receipts">Watch</button>
+    <button data-tab="owner" title="Where Receipts asks Maya when something looks wrong">Maya's phone <span class="count" id="holdCount" hidden>0</span></button>
+    <button data-tab="rules" title="Maya's rules in her own words, and what Receipts enforces">Her rules</button>
+    <button data-tab="ledger" title="Every money move any AI tried, and what Receipts did">Her book</button>
+    <button data-tab="results" title="What we measured: 19 AI models, 19 business days">Results</button>
+  </nav>
+  <div class="env" id="env">PayPal: …</div>
+</header>
+
+<main>
+  <!-- LIVE -->
+  <section id="tab-live" class="tab on">
+    <div class="howto" id="howto">
+      <div><b>Maya's AI agent pays her bills through PayPal.</b> Watch the same AI work the same morning twice: on the left nothing checks it; on the right, Receipts checks PayPal before any money leaves.</div>
+      <button class="x" id="howtoX" aria-label="Dismiss">&times;</button>
+    </div>
+    <div class="controls">
+      <label>Day at Maya's shop<select id="scn"></select></label>
+      <label>AI model<select id="model"></select></label>
+      <details class="more"><summary>More options</summary>
+        <div class="more-body">
+          <label>Source<select id="source"><option value="recorded">Recorded real run (replayed through PayPal now)</option><option value="live">Live model run</option></select></label>
+          <label class="chk"><input type="checkbox" id="sbs" checked> Side by side: Receipts off / on</label>
+        </div>
+      </details>
+    </div>
+    <div class="scn-note" id="scnNote"></div>
+    <div class="step"><span class="n">1</span><b>Maya's inbox this morning</b><span class="muted">Tap an email to read all of it.</span></div>
+    <div class="inbox" id="inbox"></div>
+    <div class="step"><span class="n">2</span><button class="go big" id="go">Run the day</button><span class="muted" id="runNote">A real recorded run, replayed through Receipts now.</span></div>
+    <div class="step" id="step3"><span class="n">3</span><b>Compare the two sides.</b><span class="muted">Same AI, same inbox.</span>
+      <label class="chk every"><input type="checkbox" id="every"> Show every step the AI took</label></div>
+    <div class="outcome" id="outcome" hidden></div>
+    <div class="arms" id="arms">
+      <div class="arm off" id="arm-observe">
+        <div class="arm-head"><div><div class="arm-title">Without Receipts</div><div class="arm-sub" id="sub-observe">Nothing checks the AI's payments</div></div>
+          <div class="meter"><div class="m-label">Left the business wrongly</div><div class="m-val bad" id="lost-observe">$0.00</div></div></div>
+        <div class="feed" id="feed-observe"></div>
+      </div>
+      <div class="arm on" id="arm-enforce">
+        <div class="arm-head"><div><div class="arm-title">With Receipts</div><div class="arm-sub" id="sub-enforce">Receipts checks PayPal before any money leaves</div></div>
+          <div class="meter"><div class="m-label">Stopped before PayPal</div><div class="m-val good" id="lost-enforce">$0.00</div></div></div>
+        <div class="feed" id="feed-enforce"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- OWNER -->
+  <section id="tab-owner" class="tab">
+    <div class="owner-wrap">
+      <div class="phone-stage">
+        <div class="phone">
+          <i class="pb pb-act"></i><i class="pb pb-up"></i><i class="pb pb-down"></i><i class="pb pb-pow"></i>
+          <div class="screen">
+            <div class="island"></div>
+            <div class="ph-head">
+              <div class="ph-status"><span>9:41</span><span class="ph-icons" aria-hidden="true">
+                <svg viewBox="0 0 18 12" width="18" height="12"><rect x="0" y="8" width="3" height="4" rx="1"/><rect x="5" y="5.5" width="3" height="6.5" rx="1"/><rect x="10" y="3" width="3" height="9" rx="1"/><rect x="15" y="0" width="3" height="12" rx="1"/></svg>
+                <svg viewBox="0 0 16 12" width="16" height="12"><path d="M8 11.6l2.4-2.7a3.4 3.4 0 0 0-4.8 0z"/><path d="M3.5 6.7a6.4 6.4 0 0 1 9 0l-1.5 1.6a4.3 4.3 0 0 0-6 0z"/><path d="M.9 3.9a10.2 10.2 0 0 1 14.2 0l-1.5 1.6a8 8 0 0 0-11.2 0z"/></svg>
+                <svg viewBox="0 0 27 13" width="27" height="13"><rect x=".5" y=".5" width="23" height="12" rx="3.5" fill="none" stroke="currentColor" opacity=".45"/><rect x="2" y="2" width="17" height="9" rx="2"/><path d="M25 4.5v4a2 2 0 0 0 0-4z" opacity=".45"/></svg>
+              </span></div>
+              <div class="ph-app">Receipts</div><div class="ph-biz">Juniper &amp; Oak · Maya</div>
+            </div>
+            <div class="ph-body" id="holds"><div class="empty">Nothing waiting. Run a day with Receipts on, and anything that needs Maya lands here.</div></div>
+            <div class="ph-home"></div>
+          </div>
+        </div>
+      </div>
+      <div class="owner-side">
+        <h2>One tap, with the reason</h2>
+        <p>When a money move needs the owner, Receipts holds it and sends this card. Approve, and it goes to PayPal right then. Decline, and it never does.</p>
+        <p>Every reason on a card is built only from facts Receipts looked up: the list of suppliers she pays, her phone log, and PayPal's own records of the order, the payment, the refunds and the delivery tracking.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- RULES -->
+  <section id="tab-rules" class="tab">
+    <div class="rules-grid">
+      <div class="card">
+        <h2>Your rules, in your words</h2>
+        <textarea id="english" spellcheck="false"></textarea>
+        <div class="row"><button class="go" id="compile">Turn these into exact rules</button><span class="muted" id="compiledBy"></span></div>
+      </div>
+      <div class="card">
+        <h2>What Receipts will enforce</h2>
+        <p class="muted">AI drafts these from your words. Code checks every value, and nothing changes until you press Use these rules. The AI never decides a payment.</p>
+        <div id="ruleList"></div>
+        <div class="row"><button class="go" id="usePolicy">Use these rules</button><span class="muted" id="policySaved"></span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- LEDGER -->
+  <section id="tab-ledger" class="tab">
+    <div class="ledger-head">
+      <h2>Maya's book: every money move an agent tried, and what Receipts did</h2>
+      <div class="ledger-tools">
+        <input id="quick" placeholder="Search: a model, a supplier, an invoice…">
+        <button id="exportCsv" class="ghost" title="Every decision in this view, with its reason, as a spreadsheet">Download for the accountant</button>
+      </div>
+    </div>
+    <div class="views" id="ledgerViews" role="group" aria-label="Views of the book">
+      <button data-view="all" class="on" aria-pressed="true">Everything</button>
+      <button data-view="held" aria-pressed="false">Held for Maya</button>
+      <button data-view="stopped" aria-pressed="false">Stopped</button>
+      <button data-view="twice" aria-pressed="false">Would have paid twice</button>
+      <button data-view="words" aria-pressed="false">The agent's words</button>
+    </div>
+    <div class="ledger-sum" id="ledgerSum" aria-live="polite"></div>
+    <div id="grid" class="ag-theme-quartz grid"></div>
+  </section>
+
+  <!-- RESULTS -->
+  <section id="tab-results" class="tab">
+    <div id="resultsBody"></div>
+  </section>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/ag-grid-community@32.3.3/dist/ag-grid-community.min.js"></script>
+<script src="/static/app.js?v=2026-11-10i"></script>
+</body>
+</html>

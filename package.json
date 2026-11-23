@@ -1,0 +1,10 @@
+{
+  "name": "receipts",
+  "version": "1.0.0",
+  "description": "PayPal's official MCP server, used by Receipts in sandbox mode",
+  "license": "MIT",
+  "dependencies": {
+    "@paypal/mcp": "^1.8.1"
+  },
+  "private": true
+}
