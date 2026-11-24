@@ -29,7 +29,7 @@
 
 - [x] 6. README and Kiro write-up sections for Carbon Copy, disclosing the Receipts base
 
-- [ ] 7. Polish round from a human click-through
+- [x] 7. Polish round from a human click-through
   - [x] 7.1 Name: "Carbon Copy" everywhere a visitor reads it; wordmark in Special Elite, no drawn logo
   - [x] 7.2 `tamper_demo()` flips an owner "declined" to "approved" and says so in plain words, with a fallback for books with no owner action; tests for both paths
   - [x] 7.3 No sideways scroll from 375 to 1400 pixels on every tab
@@ -95,3 +95,10 @@
   - [x] 12.9 C8: the attacker's prompt (stand-in only; C1 to C7 fixed)
   - [x] 12.10 Tests in `tests/` for every fix; the full run; every `scratch_attacks/attack2_*.py` run and reported
   - _Requirements: 12_
+
+- [x] 13. An honest book after a local restart
+  - [x] 13.1 Spec first: Requirement 13, design section "Task 13", these tasks
+  - [x] 13.2 `restart_note` in Python and in the page, the note under the verdict, nothing for a fixed key
+  - [x] 13.3 README "Try it": set a fixed key
+  - [x] 13.4 Tests for a temporary and a fixed key; the full run
+  - _Requirements: 13_

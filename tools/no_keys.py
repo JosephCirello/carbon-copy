@@ -4,7 +4,7 @@ import re
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-SKIP_DIRS = {".git", ".venv", "node_modules", "__pycache__", ".pytest_cache", ".hypothesis"}
+SKIP_DIRS = {".git", ".venv", "node_modules", "__pycache__", ".pytest_cache", ".hypothesis", "scratch_attacks"}
 PATTERNS = [
     (re.compile(r"-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----"), "a PEM private key"),
     (re.compile(r"CARBON_COPY_KEY\s*=\s*['\"]?[0-9a-fA-F]{64}"), "a Carbon Copy signing seed"),

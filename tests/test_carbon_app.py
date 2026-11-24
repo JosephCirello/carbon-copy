@@ -418,9 +418,10 @@ def test_the_mcp_server_starts_over_stdio_and_lists_its_tools():
 
 
 def test_readme_is_in_line_with_task_10():
-    assert "Category: (to be confirmed)" in README and "Session records:** docs/kiro-sessions/" in README
+    assert "Category:" in README and "Session records:** [docs/kiro-sessions/](docs/kiro-sessions/README.md)" in README
+    assert (ROOT / "docs" / "kiro-sessions" / "README.md").exists()
     assert "always-on plan" in README and "free plan" not in README
-    assert "after each save" in README and "tasks 1 to 11" in README.lower() or "(tasks 1 to 11)" in README
+    assert "after each save" in README and "tasks 1 to 13" in README.lower()
     section = README[README.index("## How Kiro built it"):README.index("## Limits we know about")]
     for word in ("Kiro CLI, headless", "Spec-driven", "Steering", "Hooks", "Property-based", "MCP", "Custom agent", "Powers", "None were used"):
         assert word in section, word
@@ -553,7 +554,7 @@ def test_spec_carries_requirement_11_and_task_11():
 
 def test_readme_is_in_line_with_task_11():
     assert "Amounts that are not whole numbers are sealed as text, so the book shows the value, not whether the AI wrote it as a number or as text." in README
-    assert "tasks 1 to 11" in README and "11 requirements" in README
+    assert "tasks 1 to 13" in README and "13 requirements" in README
     section = README[README.index("## How Kiro built it"):README.index("## Limits we know about")]
     assert "kiro-cli mcp list" in section and "Mode 'carbon-attacker' not found" in section
     assert "aren't available to me" in section

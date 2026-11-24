@@ -1,0 +1,18 @@
+# Kiro build sessions
+
+The team wrote the spec (`.kiro/specs/carbon-copy/`), the steering files and the hooks; the Kiro CLI (`kiro-cli chat --no-interactive --trust-all-tools`) implemented every task from them, one run per task, and Kiro kept the spec current as it went (each time a gap was found, the requirement was written first, then the code). The custom agent `carbon-attacker` was run twice against the build, and its findings became tasks 11 and 12. A few configuration fixes were made by hand, each in its own commit: the package list (`requirements.txt`), the hosting recipe (`Dockerfile`, `render.yaml`), the README's demo link and run commands, and the key scanner's skip list. Each file here is one Kiro run: the instructions exactly as given, then the steps Kiro narrated as it worked and its own end report, copied from the run's log with only personal folder paths removed. Tool-call progress lines are left out. Between runs a person checked the result (the tests, the attacker's reproductions, a click-through in the running app) and committed it; the commit messages say which commit each run became.
+
+- [task 1 (the book and the check)](01_task1_the_book_and_the_check.md)
+- [task 2 (signed count, property tests)](02_task2_signed_count_and_property_tests.md)
+- [tasks 3 and 4 (demo, CLI, wiring, phone stamp)](03_tasks3_4_demo_cli_wiring_phone_stamp.md)
+- [task 5 (the screen)](04_task5_the_screen.md)
+- [fix: a book through a browser](05_fix_browser_round_trip.md)
+- [task 7 and task 6 (polish, README)](06_task7_task6_polish_and_readme.md)
+- [task 8 (the run Maya saw)](07_task8_the_run_maya_saw.md)
+- [task 9 (trust nothing the server says)](08_task9_trust_nothing_the_server_says.md)
+- [task 10 (what a judge trips on)](09_task10_what_a_judge_trips_on.md)
+- [the custom agent carbon-attacker, first run](10_agent_carbon_attacker_first_run.md)
+- [task 11 (what our own attacker found)](11_task11_what_our_own_attacker_found.md)
+- [the custom agent carbon-attacker, second run (MCP loaded)](12_agent_carbon_attacker_second_run.md)
+- [task 12 (the attacker's second round)](13_task12_the_attackers_second_round.md)
+- [task 13 (a honest book after a local restart)](14_task13_honest_book_after_a_local_restart.md)
