@@ -383,7 +383,7 @@ table.plain th { font-size: 12px; text-transform: uppercase; letter-spacing: .05
 .cc-tools { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 .cc-tools .go { background: #8aa8dc; color: #14131a; font-family: Inter, system-ui, sans-serif; }
 .cc-tools .chk { color: #8aa8dc; }
-.cc-result { min-height: 12px; margin: 16px 0 6px; display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
+.cc-result { scroll-margin-top: 84px; min-height: 12px; margin: 16px 0 6px; display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
 .cc-say { margin: 0; font-family: "Special Elite", "Courier New", monospace; color: #a9c0e8; }
 .stamp { display: inline-block; font-family: "Special Elite", "Courier New", monospace; font-size: 34px; letter-spacing: 3px; padding: 6px 18px; transform: rotate(-6deg); border: 4px double currentColor; border-radius: 6px; margin: 8px 0 10px 8px; opacity: .92; }
 .stamp.ok { color: #3fbf7a; }

@@ -412,3 +412,15 @@ Tests are in 	ests/test_carbon_round7.py.
 **3. Tests.** `tests/test_carbon_round8.py`: the pure functions; an initialize through a real streamable-HTTP app built with the settings (accepted for the configured name through either variable, refused for another Host with 421, a foreign Origin refused 403, localhost with a port still accepted); and a fresh process that imports `app` with the variable set and talks to `/mcp/` through its middleware.
 
 **4. The README.** The first screen, the table, "Point your own AI at it" and the updated counts are in the README; numbers are read from the repository: the attacker findings from the four reports in `docs/kiro-sessions/` (10, 12, 17, 23), the receipts count from "What we measured on the book", the counts of requirements, tasks, hooks, steering files and session records from the repository's files. Tests compare them (`tests/test_carbon_round8.py` and `tests/readme_counts.py`).
+
+## Task 26: what a first-time judge trips on (amends Requirement 10)
+
+**1. The scroll.** `static/app.js` has `showAnswer()`: when `#ccResult` has content it sets `scroll-margin-top` to the sticky bar's height plus 12 pixels and calls `scrollIntoView({ block: "start" })`, smooth unless `prefers-reduced-motion` is set. `answered(fn)` wraps the three button handlers so it runs after each one finishes, whatever path it took (an answer, or a plain "nothing to change yet"). `static/style.css` carries a default `scroll-margin-top` for `.cc-result`. On the tall phone bar (162 px at 375 wide) a fixed margin put the stamp under the bar, so the margin is read from the bar.
+
+**2. The footer.** One more line in `.foot`, in the same style, with the repository link (`rel="noopener"`).
+
+**3. Which PayPal.** `ppSay("the" | "poss")` returns "the PayPal stand-in" or "the PayPal sandbox" (and the possessive) from `META.paypal_mode`, which comes from `/api/meta`. Static text in `index.html` that names PayPal carries `data-pp` and is filled in at boot; the run-source option, the side's sub-title, the replay tag and the ledger's "Why" header call `ppSay`. Screens that already name which one are left alone.
+
+**4. The repository.** The words in `docs/kiro-sessions/README.md`, the hook description and the README, as Requirement 10 items 13 to 15 say. The README's word count goes down; every count test still compares the README with the repository.
+
+**5. Tests.** `tests/test_carbon_round9.py`: the wording; and a real Chromium (Playwright; skipped when none is installed) at 375 x 812, 768 x 1024 and 1280 x 800, light and dark, driving the demo against a local server on the stand-in: the stamp is under the sticky bar, on screen and in the top part of the window after each of the three buttons.

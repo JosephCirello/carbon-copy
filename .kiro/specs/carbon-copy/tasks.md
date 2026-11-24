@@ -198,3 +198,11 @@
   - [x] 25.3 README: the judge's first screen, the "How Kiro built it" table, "Point your own AI at it", counts
   - [x] 25.4 Tests in `tests/test_carbon_round8.py`; session record 29; the whole suite
   - _Requirements: 20_
+
+- [x] 26. What a first-time judge trips on (amends Requirement 10, items 10 to 15)
+  - [x] 26.1 Spec first: Requirement 10 amended, design section "Task 26", this task
+  - [x] 26.2 The answer of *Check the book*, *Try to change one* and *Try to forge a new book* is scrolled into view, the stamp under the sticky bar; tested in Chromium at phone, tablet and desktop width, light and dark
+  - [x] 26.3 The footer line saying what the demo is entered in; the run-source option and four more lines name the PayPal the server reports
+  - [x] 26.4 Session records say four attacker runs; the no-keys hook's description; the README says who wrote what and which changes were by hand, the stray bullet is gone, the picture 04 caption says it is a local copy
+  - [x] 26.5 The README shortened without losing a fact (repeats removed, the MCP bullet and the Limits paragraph split into short bullets); count tests unchanged and passing
+  - _Requirements: 10_

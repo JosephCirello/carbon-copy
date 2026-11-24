@@ -13,7 +13,7 @@
     },
     {
       "name": "No keys in the repo",
-      "description": "Before the agent writes any file, refuse one that looks like it holds a private key or seed.",
+      "description": "After each save of any file, run the key scanner, which fails when the file looks like it holds a private key, a seed or a provider token.",
       "trigger": "PostFileSave",
       "matcher": ".*",
       "action": { "type": "command", "command": ".venv\\Scripts\\python.exe tools\\no_keys.py" }

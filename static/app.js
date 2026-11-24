@@ -99,6 +99,11 @@ function showTab(t) {
 }
 
 /* ---------- boot ---------- */
+// Which PayPal this server runs, in words: "the PayPal stand-in" or "the PayPal sandbox" (and the possessive), read from what the server reports.
+function ppSay(form) {
+  const the = META.paypal_mode === "sandbox" ? "the PayPal sandbox" : "the PayPal stand-in";
+  return form === "poss" ? the + "'s" : the;
+}
 async function boot() {
   const m = await (await fetch("/api/meta")).json();
   Object.assign(META, m);
@@ -112,7 +117,8 @@ async function boot() {
   $("#env").textContent = m.paypal_mode === "sandbox" ? "PayPal sandbox · live" : "PayPal stand-in (no real money, no PayPal account)";
   $("#env").title = m.paypal_mode === "sandbox" ? "Every allowed money move goes to PayPal's sandbox now."
     : "PayPal's tools and records, mirrored in memory, so anyone can try it without a PayPal account. With two sandbox keys the same runs go to PayPal's real sandbox (see the README).";
-  if (m.paypal_mode !== "sandbox") $("#source").querySelector('[value="recorded"]').textContent = "Recorded real run (replayed through Carbon Copy now)";
+  document.querySelectorAll("[data-pp]").forEach((el) => { el.textContent = ppSay(el.dataset.pp); });   // every line that says "PayPal" names which one this server runs
+  $("#source").querySelector('[value="recorded"]').textContent = `Recorded real run (replayed through ${ppSay("the")} now)`;
   if (!m.live_allowed) {
     const live = $("#source").querySelector('[value="live"]');
     live.disabled = true; live.textContent = "Live model run (off on this demo)";
@@ -315,11 +321,11 @@ function render(mode, e) {
   if (e.head && mode === "enforce" && Number.isInteger(e.head.count)) setSealed(e.head.count);
   if (e.head && A.session) deviceKeep(A.session, e.head);       // every event carries a signed stamp of the book at that moment
   switch (e.type) {
-    case "session": $("#sub-" + mode).textContent = mode === "observe" ? "Nothing checks the AI's payments" : "The check looks at PayPal before any money leaves";
+    case "session": $("#sub-" + mode).textContent = mode === "observe" ? "Nothing checks the AI's payments" : `The check looks at ${ppSay("the")} before any money leaves`;
       $("#sub-" + mode).title = `PayPal ${e.backend}`;
       if (e.note) add(mode, `<div class="replay-tag">${esc(e.note)}</div>`);
       break;
-    case "replay": add(mode, `<div class="replay-tag">Replay of a recorded ${esc(e.model)} run (${esc((e.recorded_at || "").replace("T", " ").replace("Z", " UTC"))}). The agent's words and calls are the recorded ones; the check and PayPal are running now.</div>`); break;
+    case "replay": add(mode, `<div class="replay-tag">Replay of a recorded ${esc(e.model)} run (${esc((e.recorded_at || "").replace("T", " ").replace("Z", " UTC"))}). The agent's words and calls are the recorded ones; the check and ${ppSay("the")} are running now.</div>`); break;
     case "say":
       if (e.where !== "reply") break;
       A.said.push(e.text);
@@ -652,7 +658,18 @@ $("#ccSwitch").addEventListener("click", (ev) => {
   CC_PICK = b.dataset.mode;
   loadCarbon();
 });
-$("#ccCheck").addEventListener("click", async () => {
+// Whenever one of the three demo buttons has written its answer, bring the answer into view (the stamp near the top of the window), at every width.
+// On a phone the buttons fill the screen and the answer lands below the fold. Reduced motion gets a jump, not a glide.
+function showAnswer() {
+  const el = $("#ccResult");
+  if (!el || !el.firstChild) return;
+  const bar = document.querySelector(".top");                  // the bar stays on screen (sticky), so leave its height above the answer
+  if (bar) el.style.scrollMarginTop = (bar.offsetHeight + 12) + "px";
+  const calm = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  el.scrollIntoView({ behavior: calm ? "auto" : "smooth", block: "start" });
+}
+const answered = (fn) => async (...a) => { try { await fn(...a); } finally { showAnswer(); } };
+$("#ccCheck").addEventListener("click", answered(async () => {
   if (!CC) return;
   if (!(await refreshBook())) { $("#ccResult").textContent = NO_FRESH; return; }
   let got = null;
@@ -660,8 +677,8 @@ $("#ccCheck").addEventListener("click", async () => {
   if (!got) { $("#ccResult").textContent = "The check did not run. Try again."; return; }
   const out = got.out;
   $("#ccResult").innerHTML = ccStamp(out) + ccNotes() + `<p class="cc-say">${out.intact ? `All ${out.count} receipts are as they were written.` : esc(out.why || "")}</p>` + ccWhere(got.where) + (out.intact ? "" : await restartNoteHtml(CC.public_key));
-});
-$("#ccTamper").addEventListener("click", async () => {
+}));
+$("#ccTamper").addEventListener("click", answered(async () => {
   if (!CC) return;
   if (!(await refreshBook())) { $("#ccResult").textContent = NO_FRESH; return; }
   const res = await fetch("/api/carbon/tamper" + (CC.session ? "?sid=" + encodeURIComponent(CC.session) + "&mode=" + encodeURIComponent(CC.mode || "enforce") : ""), { method: "POST" });
@@ -673,8 +690,8 @@ $("#ccTamper").addEventListener("click", async () => {
   if (!got) { $("#ccResult").textContent = "The check did not run. Try again."; return; }
   const what = `<p class="cc-say">${esc(t.say || `We changed receipt #${t.n} from ${ccFmt(t.field, t.before)} to ${ccFmt(t.field, t.after)} in a copy of the book.`)} The real book was not touched.</p>`;
   $("#ccResult").innerHTML = what + ccStamp(got.out) + ccNotes() + `<p class="cc-say">${got.out.intact ? "This device did not catch it, because it holds no stamp that reaches the book. That is the limit described in the README." : esc(got.out.why || "")}</p>` + ccWhere(got.where);
-});
-$("#ccForge").addEventListener("click", async () => {
+}));
+$("#ccForge").addEventListener("click", answered(async () => {
   if (!CC) return;
   if (!(await refreshBook())) { $("#ccResult").textContent = NO_FRESH; return; }
   if (!devicePinned()) { $("#ccResult").innerHTML = `<p class="cc-say">This device has not seen the signing key yet, so it has nothing to hold the forgery up against. Run the day on the Watch tab first.</p>`; return; }
@@ -689,7 +706,7 @@ $("#ccForge").addEventListener("click", async () => {
     : `${f.say || "We rewrote the book."} We re-sealed every page with a new key. Your device still holds the key it trusted and the stamps it saw, so the forgery is caught.`;
   $("#ccResult").innerHTML = `<p class="cc-say">${esc(story)} The real book was not touched.</p>` + ccStamp(got.out)
     + `<p class="cc-say">${got.out.intact ? "This device did not catch it, because it holds no stamp that reaches the book. That is the limit described in the README." : esc(got.out.why || "")}</p>` + ccWhere(got.where);
-});
+}));
 $("#ccDownload").addEventListener("click", async () => {
   if (!CC) return;
   if (!(await refreshBook())) { $("#ccResult").textContent = NO_FRESH; return; }
@@ -827,7 +844,7 @@ async function loadLedger() {
         { colId: "rule", headerName: "Rule", width: 280, filter: true, tooltipValueGetter: (p) => p.data && p.data.codes,
           valueGetter: (p) => (p.data ? codesPlain(p.data) : "") },
         { field: "said_first", headerName: "Said no first", width: 130, cellRenderer: (p) => (p.value ? "⚠ yes" : "") },
-        { colId: "why", headerName: "Why (built from PayPal and the records)", flex: 1, minWidth: 380, valueGetter: (p) => plain(p.data && p.data.why), tooltipValueGetter: (p) => plain(p.data && p.data.why), filter: true },
+        { colId: "why", headerName: `Why (built from ${ppSay("the")} and the records)`, flex: 1, minWidth: 380, valueGetter: (p) => plain(p.data && p.data.why), tooltipValueGetter: (p) => plain(p.data && p.data.why), filter: true },
         { field: "paypal_id", headerName: "PayPal id", width: 170 },
         { field: "backend", headerName: "PayPal", width: 110, filter: true, valueFormatter: (p) => (p.value === "standin" ? "stand-in" : p.value || "") },
         { field: "receipt_n", headerName: "Receipt #", width: 120, type: "rightAligned" },

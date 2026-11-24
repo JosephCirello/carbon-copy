@@ -49,7 +49,7 @@
       <label>AI model<select id="model"></select></label>
       <details class="more"><summary>More options</summary>
         <div class="more-body">
-          <label>Source<select id="source"><option value="recorded">Recorded real run (replayed through PayPal now)</option><option value="live">Live model run</option></select></label>
+          <label>Source<select id="source"><option value="recorded">Recorded real run (replayed now)</option><option value="live">Live model run</option></select></label>
           <label class="chk"><input type="checkbox" id="sbs" checked> Side by side: Nothing checking / Carbon Copy on</label>
         </div>
       </details>
@@ -68,7 +68,7 @@
         <div class="feed" id="feed-observe"></div>
       </div>
       <div class="arm on" id="arm-enforce">
-        <div class="arm-head"><div><div class="arm-title">Carbon Copy on</div><div class="arm-sub" id="sub-enforce">The check looks at PayPal before any money leaves</div><button type="button" class="sealed" id="sealed" title="Open the carbon copies">Carbon copies sealed: <b id="sealedN">0</b></button></div>
+        <div class="arm-head"><div><div class="arm-title">Carbon Copy on</div><div class="arm-sub" id="sub-enforce">The check looks at <span data-pp="the">the PayPal stand-in</span> before any money leaves</div><button type="button" class="sealed" id="sealed" title="Open the carbon copies">Carbon copies sealed: <b id="sealedN">0</b></button></div>
           <div class="meter"><div class="m-label">Stopped before PayPal</div><div class="m-val good" id="lost-enforce">$0.00</div></div></div>
         <div class="feed" id="feed-enforce"></div>
       </div>
@@ -100,8 +100,8 @@
         <p class="phone-next" id="phoneNext" hidden><button type="button" class="go" id="phoneNextBtn">Next: try to forge the record</button></p>
         <h2>One tap, with the reason</h2>
         <p class="cc-word" id="phKeep" hidden>This server keeps a run for one hour after its last activity (it starting, or your last approve or decline), and for 24 hours when a payment in it is waiting for you. Download the carbon copies to keep them.</p>
-        <p>When a money move needs the owner, Carbon Copy holds it and sends this card. Approve, and it goes to PayPal right then. Decline, and it never does.</p>
-        <p>Every reason on a card is built only from facts Carbon Copy looked up: the list of suppliers she pays, her phone log, and PayPal's own records of the order, the payment, the refunds and the delivery tracking.</p>
+        <p>When a money move needs the owner, Carbon Copy holds it and sends this card. Approve, and it goes to <span data-pp="the">the PayPal stand-in</span> right then. Decline, and it never does.</p>
+        <p>Every reason on a card is built only from facts Carbon Copy looked up: the list of suppliers she pays, her phone log, and <span data-pp="poss">the PayPal stand-in's</span> records of the order, the payment, the refunds and the delivery tracking.</p>
       </div>
     </div>
   </section>
@@ -179,7 +179,7 @@
   </section>
 </main>
 
-<footer class="foot" id="foot">Signing key: <span id="footKey">checking…</span></footer>
+<footer class="foot" id="foot">Signing key: <span id="footKey">checking…</span><br>Built with Kiro for Kiroween 2026 · Code and the Kiro sessions: <a href="https://github.com/JosephCirello/carbon-copy" target="_blank" rel="noopener">github.com/JosephCirello/carbon-copy</a></footer>
 
 <script src="/static/carbon_verify.js?v=2026-11-28a"></script>
 <script src="https://cdn.jsdelivr.net/npm/ag-grid-community@32.3.3/dist/ag-grid-community.min.js" integrity="sha384-OEiOpwgvTUxOUC72SwfU8zDqZrWBwr0YNPNhovPbjCxdaTD0cLxMHBew/o8zuRln" crossorigin="anonymous"></script>
