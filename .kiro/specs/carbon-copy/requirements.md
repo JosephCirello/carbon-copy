@@ -124,3 +124,15 @@ The custom Kiro agent `carbon-attacker` ran again and proved seven more things, 
 6. THE DEVICE REMEMBERS MORE RUNS (C6). THE device SHALL keep stamps for 100 runs. WHEN it kept none for the run on screen THEN the line "kept no stamp for this run" SHALL sit directly beside the verdict. THE README's Limits SHALL say, in plain words, that once a run's stamps are dropped to make room a rewrite of that run is no longer caught.
 7. THE CHECK USES THE CURRENT BOOK (C7). "Check the book", "Try to change one", "Try to forge a new book" and "Download the carbon copies" SHALL fetch the current book first, so a copy held since the tab was opened never meets a later honest stamp.
 8. THE ATTACKER STAYS ON THE STAND-IN (C8). THE `carbon-attacker` prompt SHALL require every command it runs to set `PAYPAL_MODE=standin`, forbid it ever to start the PayPal sandbox, and name findings C1 to C7 as fixed so a third run looks elsewhere.
+
+
+### Requirement 13: an honest book after a local restart
+
+A human click-through found that on a machine with no `CARBON_COPY_KEY`, running the day, restarting the server and running the day again makes "Check the book" say CHANGED ("it was signed with a different key than the one your device trusts") on an honest book, with no explanation. The hosted demo has a fixed key and never does this.
+
+1. THE VERDICT STAYS (D1). A key that differs from the one the device trusts SHALL still be *changed*, with the same reason, in both checks. A key change SHALL NOT be excused automatically, because an attacker could claim a restart.
+2. THE SCREEN EXPLAINS A TEMPORARY KEY (D2). WHEN the book's key differs from the device's trusted key AND `/api/carbon/key` says `temporary` is true, THEN the screen SHALL show under the verdict: "This server makes a new temporary signing key every time it starts. If you restarted it yourself, that is why the key changed: press 'Forget what this device trusts' and run the day again. The hosted demo uses a fixed key, so this never happens there."
+3. A FIXED KEY SAYS NOTHING EXTRA (D3). WHEN the server's key is not temporary, or the keys match, or the device trusts no key yet, the screen SHALL show nothing extra.
+4. THE FOOTER STAYS (D4). The footer keeps "Signing key: temporary (changes on restart)".
+5. THE README SAYS HOW TO AVOID IT (D5). "Try it" SHALL show, before the run commands, how to set a fixed `CARBON_COPY_KEY` (PowerShell and macOS/Linux) and one sentence on why.
+6. TESTS (D6). A test SHALL cover the function that decides (`restart_note` in `receipts/carbon.py` and its twin in `static/carbon_verify.js`) and the `/api/carbon/key` values it reads, for a temporary and a fixed key.

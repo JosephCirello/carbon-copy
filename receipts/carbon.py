@@ -354,6 +354,18 @@ WHY_SHORT = "the book is shorter than a stamp your device already holds"
 WHY_UNREADABLE = "this is not a carbon-copy book we can read"
 WHY_BAD_KEY = "its public key is not written the way a key must be"
 
+RESTART_NOTE = ("This server makes a new temporary signing key every time it starts. If you restarted it yourself, "
+                "that is why the key changed: press 'Forget what this device trusts' and run the day again. "
+                "The hosted demo uses a fixed key, so this never happens there.")
+
+
+def restart_note(book_key, trusted_key, temporary) -> str | None:
+    """Words for the owner, never a verdict: verify() is not asked and not changed. Only a temporary server key,
+    a key the device already trusts and a book signed with another key give the note."""
+    if temporary is not True or not isinstance(book_key, str) or not isinstance(trusted_key, str):
+        return None
+    return RESTART_NOTE if book_key.lower() != trusted_key.lower() else None
+
 
 def _changed(count: int, why: str, first_bad: int | None = None) -> dict:
     out = {"intact": False, "count": count}

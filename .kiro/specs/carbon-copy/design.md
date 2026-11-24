@@ -305,3 +305,8 @@ The prompt says every command sets `PAYPAL_MODE=standin`, never starts the sandb
 
 ### Tests
 `tests/test_carbon_round2.py` holds a test for each of C1 to C8 (the CLI through `subprocess`, the page's own functions under node).
+
+
+## Task 13: an honest book after a local restart
+
+`restart_note(book_key, trusted_key, temporary)` in `receipts/carbon.py` is plain code with no model: it returns the explanation text (`RESTART_NOTE`) only when `temporary is True`, `trusted_key` is set and the two keys differ (compared lower-cased), else `None`. `static/carbon_verify.js` carries the same function (`restartNote`) and the same text. `verify()` is not changed, so the verdict is the same as before. On "Check the book" the page reads `/api/carbon/key` (`temporary`) and puts the note under the verdict; if that request fails it shows nothing. The footer is unchanged. The README's "Try it" gains a fixed-key line. Tests are in `tests/test_carbon_restart.py`.

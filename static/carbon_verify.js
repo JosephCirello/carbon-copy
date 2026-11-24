@@ -146,7 +146,13 @@
     return { intact: true, count };
   }
 
-  const api = { verify, canonical, fingerprint, supportsEd25519, codePointCompare, parseStamps };
+  const RESTART_NOTE = "This server makes a new temporary signing key every time it starts. If you restarted it yourself, that is why the key changed: press \u0027Forget what this device trusts\u0027 and run the day again. The hosted demo uses a fixed key, so this never happens there.";
+  function restartNote(bookKey, trustedKey, temporary) {   // words only, never a verdict: verify() is not asked
+    if (temporary !== true || typeof bookKey !== "string" || typeof trustedKey !== "string") return null;
+    return bookKey.toLowerCase() !== trustedKey.toLowerCase() ? RESTART_NOTE : null;
+  }
+
+  const api = { verify, restartNote, canonical, fingerprint, supportsEd25519, codePointCompare, parseStamps };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.CarbonVerify = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

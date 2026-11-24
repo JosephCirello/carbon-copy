@@ -609,6 +609,13 @@ async function refreshBook() {
   } catch { return false; }
 }
 const NO_FRESH = "Could not fetch the current book from the server, so nothing was checked. Try again.";
+async function restartNoteHtml(bookKey) {      // plain words under the verdict; the verdict itself is not touched
+  try {
+    const k = await (await fetch("/api/carbon/key")).json();
+    const note = window.CarbonVerify ? window.CarbonVerify.restartNote(bookKey, devicePinned(), k.temporary) : null;
+    return note ? `<p class="cc-say cc-restart">${esc(note)}</p>` : "";
+  } catch { return ""; }
+}
 async function checkOnDevice(book) {
   const stamps = deviceStamps(CC.session), key = devicePinned();
   if (window.CarbonVerify && await window.CarbonVerify.supportsEd25519()) {
@@ -641,7 +648,7 @@ $("#ccCheck").addEventListener("click", async () => {
   try { got = await checkOnDevice({ public_key: CC.public_key, head: CC.head, receipts: CC.receipts }); } catch { got = null; }
   if (!got) { $("#ccResult").textContent = "The check did not run. Try again."; return; }
   const out = got.out;
-  $("#ccResult").innerHTML = ccStamp(out) + ccNotes() + `<p class="cc-say">${out.intact ? `All ${out.count} receipts are as they were written.` : esc(out.why || "")}</p>` + ccWhere(got.where);
+  $("#ccResult").innerHTML = ccStamp(out) + ccNotes() + `<p class="cc-say">${out.intact ? `All ${out.count} receipts are as they were written.` : esc(out.why || "")}</p>` + ccWhere(got.where) + (out.intact ? "" : await restartNoteHtml(CC.public_key));
 });
 $("#ccTamper").addEventListener("click", async () => {
   if (!CC) return;
