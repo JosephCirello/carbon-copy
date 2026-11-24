@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "carbon-copy": {
+      "command": ".venv\\Scripts\\python.exe",
+      "args": ["-m", "receipts.mcp_server"],
+      "disabled": false,
+      "autoApprove": []
+    }
+  }
+}

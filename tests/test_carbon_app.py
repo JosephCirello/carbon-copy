@@ -296,3 +296,144 @@ def test_an_event_holding_nan_does_not_break_the_stream(web):
     text = web._data({"type": "say", "amount": float("nan"), "list": [float("inf")], "text": "ok"})
     assert json.loads(text) == {"type": "say", "amount": "nan", "list": ["inf"], "text": "ok"}
     assert json.loads(web._data({"a": 1.5, "b": 2})) == {"a": 1.5, "b": 2}               # a normal event is left as it is
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Task 10: what a judge trips on. The page and the script are read as shipped; the Kiro files and the README are checked
+# for what the spec says they hold. No network, no keys.
+# ---------------------------------------------------------------------------------------------------------------------
+import json  # noqa: E402
+import re  # noqa: E402
+import shutil  # noqa: E402
+import subprocess  # noqa: E402
+
+ROOT = Path(__file__).resolve().parent.parent
+HTML = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+JS = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+CSS = (ROOT / "static" / "style.css").read_text(encoding="utf-8")
+README = (ROOT / "README.md").read_text(encoding="utf-8")
+SPEC = ROOT / ".kiro" / "specs" / "carbon-copy"
+
+
+def test_one_name_one_meaning_on_the_watch_tab():
+    assert ("Maya's AI agent pays her bills through PayPal.</b> Carbon Copy checks each payment before it leaves "
+            "(using Receipts, our earlier checker) and seals every move into a carbon-copy book nobody can quietly rewrite.") in HTML
+    assert "Nothing checking" in HTML and "Carbon Copy on" in HTML
+    assert "Without Carbon Copy" not in HTML and "With Carbon Copy" not in HTML
+    assert "Side by side: Nothing checking / Carbon Copy on" in HTML
+
+
+def test_the_results_tab_says_whose_measurement_it_is():
+    assert ">What Receipts measured</button>" in HTML
+    assert ("Measured by Receipts, the project Carbon Copy is built on (19 AI models, 19 business days, November 2026). "
+            "The carbon copy itself is new and is not part of these numbers.") in JS
+    assert "19 AI models over 19 business days" in HTML              # the same pointer above the totals in Her book
+
+
+def test_start_here_has_three_numbered_buttons_and_the_old_controls_stay_below():
+    for i, text in ((1, "Run Maya's day"), (2, "Decline the double payment on her phone"), (3, "Try to forge the record")):
+        assert re.search(rf'id="path{i}"[^>]*><span class="n">{i}</span>{re.escape(text)}</button>', HTML), i
+    assert HTML.index('id="path3"') < HTML.index('id="go"') and HTML.index('id="startHere"') < HTML.index('class="controls"')
+    # step 2 opens the phone tab when a hold arrives, step 3 opens the Carbon copy tab and presses the forge button
+    assert 'showTab("owner")' in JS and '$("#ccForge").click()' in JS and "PATH.phone" in JS
+
+
+def test_the_live_counter_is_fed_by_the_signed_count_of_every_event_and_links_to_the_book():
+    assert 'id="sealed"' in HTML and "Carbon copies sealed:" in HTML
+    assert 'setSealed(e.head.count)' in JS and '$("#sealed").addEventListener("click", () => showTab("carbon"))' in JS
+
+
+def test_the_screen_never_says_vendor_master_or_suspicious():
+    assert "vendor master" not in HTML.lower()
+    assert len(re.findall("vendor master", JS, flags=re.I)) == 1       # only the pattern that rewrites rules.py's words
+    assert "SUSPICIOUS" not in JS and "SUSPICIOUS" not in HTML
+    assert "Maya's list of suppliers" in JS
+
+
+def test_plain_words_are_on_the_carbon_copy_tab_once_each():
+    for line in ("a short code computed from the receipt; change one letter and it changes",
+                 "a sealed note your device keeps of how long the book was at that moment",
+                 "the seal's owner; your device remembers the first one it sees and refuses any other"):
+        assert HTML.count(line) == 1, line
+
+
+def test_all_six_tabs_are_there_and_the_bar_scrolls_inside_itself():
+    assert re.findall(r'<button data-tab="(\w+)"', HTML) == ["live", "owner", "rules", "ledger", "carbon", "results"]
+    assert "keepTabInView" in JS and "overflow-x: auto" in CSS
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not on the path")
+def test_marker_wording_says_what_the_pattern_found_and_no_more():
+    lines = [ln for ln in JS.splitlines() if re.match(r"const (markerTag|markerWords|plain) = ", ln)]
+    assert len(lines) == 3
+    script = "\n".join(lines) + """
+const out = {tag: [markerTag("REFUSED"), markerTag("HELD")], words: [markerWords("REFUSED"), markerWords("HELD")],
+  vendor: [plain("\\u201cX\\u201d is not in the vendor master."), plain("The vendor master: a list")]};
+console.log(JSON.stringify(out));"""
+    got = json.loads(subprocess.run(["node", "-e", script], capture_output=True, text=True, encoding="utf-8", check=True).stdout)
+    assert got["tag"] == ["SAID: NO", "SAID: WILL VERIFY / HOLD"]
+    assert got["words"] == ["it said no", "it said it would hold or verify"]
+    assert got["vendor"] == ["\u201cX\u201d is not in Maya's list of suppliers.", "Maya's list of suppliers: a list"]
+
+
+def test_the_honest_work_line_is_explained_next_to_the_count():
+    assert "Honest work counts only the bills and refunds that were right to do" in JS
+    assert "HONEST_NOTE" in JS and "Honest work done:" in JS         # the count stays as scored; the line explains it
+
+
+def test_kiro_mcp_json_registers_our_own_server_with_the_venv_python_and_no_secret():
+    cfg = json.loads((ROOT / ".kiro" / "settings" / "mcp.json").read_text(encoding="utf-8"))
+    srv = cfg["mcpServers"]["carbon-copy"]
+    assert srv["command"].replace("/", "\\").startswith(".venv\\Scripts\\python")
+    assert srv["args"] == ["-m", "receipts.mcp_server"] and (ROOT / "receipts" / "mcp_server.py").exists()
+    assert "env" not in srv and not re.search(r"[0-9a-fA-F]{64}", json.dumps(cfg))
+
+
+def test_kiro_custom_agent_is_the_attacker_and_stays_in_its_lane():
+    agent = json.loads((ROOT / ".kiro" / "agents" / "carbon-attacker.json").read_text(encoding="utf-8"))
+    assert agent["name"] == "carbon-attacker"
+    for word in ("forge", "rewrite", "hide", "false alarms", "PROVEN findings only", "receipts.carbon verify", "pytest"):
+        assert word.lower() in agent["prompt"].lower() or word in agent["prompt"], word
+    assert not re.search(r"[0-9a-fA-F]{64}", json.dumps(agent))
+    rules = agent["permissions"]["rules"]
+    assert {"capability": "fs_write", "match": ["scratch_attacks/**"], "effect": "allow"} in rules
+    denied = [m for r in rules if r["capability"] == "fs_write" and r["effect"] == "deny" for m in r["match"]]
+    assert "receipts/**" in denied and "tests/**" in denied and "results/**" in denied
+
+
+def test_the_mcp_server_starts_over_stdio_and_lists_its_tools():
+    proc = subprocess.Popen([sys.executable, "-m", "receipts.mcp_server"], cwd=ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                            stderr=subprocess.DEVNULL, text=True, encoding="utf-8")
+    try:
+        def ask(msg):
+            proc.stdin.write(json.dumps(msg) + "\n")
+            proc.stdin.flush()
+            return json.loads(proc.stdout.readline())
+        ask({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {},
+                                                                              "clientInfo": {"name": "test", "version": "1"}}})
+        proc.stdin.write(json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}) + "\n")
+        names = {t["name"] for t in ask({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})["result"]["tools"]}
+    finally:
+        proc.kill()
+    assert {"create_payout", "create_refund", "receipts_holds"} <= names
+
+
+def test_readme_is_in_line_with_task_10():
+    assert "Category: (to be confirmed)" in README and "Session records:** docs/kiro-sessions/" in README
+    assert "always-on plan" in README and "free plan" not in README
+    assert "after each save" in README and "tasks 1 to 10" in README.lower() or "(tasks 1 to 10)" in README
+    section = README[README.index("## How Kiro built it"):README.index("## Limits we know about")]
+    for word in ("Kiro CLI, headless", "Spec-driven", "Steering", "Hooks", "Property-based", "MCP", "Custom agent", "Powers", "None were used"):
+        assert word in section, word
+    assert not re.search(r"[0-9a-fA-F]{64}", README)
+
+
+def test_spec_carries_requirement_10_and_task_10():
+    assert "### Requirement 10: what a judge trips on" in (SPEC / "requirements.md").read_text(encoding="utf-8")
+    assert "- [x] 10. What a judge trips on" in (SPEC / "tasks.md").read_text(encoding="utf-8")
+    design = (SPEC / "design.md").read_text(encoding="utf-8")
+    assert "## What a judge trips on (task 10)" in design and "J5. False alarms: what was found" in design
+
+
+def test_the_page_loads_with_the_new_strip(client):
+    page = client.get("/").text
+    assert 'id="startHere"' in page and "What Receipts measured" in page

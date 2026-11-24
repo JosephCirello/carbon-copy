@@ -1,14 +1,18 @@
 # Carbon Copy
 
+Category: (to be confirmed)
+
 Maya runs a nine-person furniture workshop. Her AI agent pays supplier bills through PayPal. One morning it tries to pay the same $1,836.00 bill to Blue Ridge Finishes twice. The check stops the second payment and asks Maya. She declines it.
 
 Weeks later the books are questioned. The log that says she declined lives in the same system the AI runs on, so whoever controls that system can edit it to say she approved the payment. Nothing she holds can show otherwise.
+
+**Two parts, one name.** Carbon Copy is the whole product. Inside it, *the check* stops a bad payment before it reaches PayPal (it comes from Receipts, see below), and *the carbon copy* seals every move into a book nobody can quietly rewrite (this is new). On screen, the two sides of the demo are "Nothing checking" and "Carbon Copy on".
 
 Carbon Copy is the old carbon-copy receipt book for that AI. Every money move the AI tries, every decision the checker makes, every tap Maya makes and the AI's end-of-day report get a copy at the moment they happen. Each copy carries the fingerprint of the copy before it and is signed, so one changed copy shows exactly where the book was altered. Anyone holding the copies and the public key can check them, with no secret needed.
 
 ## Try it
 
-- Hosted demo: **https://carbon-copy-ywv3.onrender.com** (it runs on the PayPal stand-in: no real money, no PayPal account). On Render's free plan the first visit after a quiet spell can take about a minute to wake.
+- Hosted demo: **https://carbon-copy-ywv3.onrender.com** (it runs on the PayPal stand-in: no real money, no PayPal account). It runs on an always-on plan, so there is no wake-up delay.
 - On your machine, no keys needed:
 
 Windows (PowerShell):
@@ -27,7 +31,7 @@ python3 -m venv .venv
 .venv/bin/python -m uvicorn app:app --host 127.0.0.1 --port 8091
 ```
 
-Open http://127.0.0.1:8091, press *Run the day* on the Watch tab, then open the *Carbon copy* tab. *Check the book* says INTACT. *Try to change one* alters a copy of the book so it says Maya approved a payment she declined, and the check stamps it CHANGED at that receipt. The real book is never touched.
+Open http://127.0.0.1:8091. The *Start here* strip on the Watch tab is the 30-second path: *Run Maya's day*, then *Decline the double payment on her phone*, then *Try to forge the record*. Or press *Run the day* yourself and open the *Carbon copy* tab. *Check the book* says INTACT. *Try to change one* alters a copy of the book so it says Maya approved a payment she declined, and the check stamps it CHANGED at that receipt. The real book is never touched.
 
 Run the tests (no network, no keys): `.venv\Scripts\python.exe -m pytest -q`
 
@@ -44,8 +48,9 @@ Carbon Copy is built on [Receipts](https://github.com/JosephCirello/receipts), o
 - The *Carbon copy* tab, the server routes `/api/carbon`, `/api/carbon/key`, `/api/carbon/verify`, `/api/carbon/tamper` and `/api/carbon/forge`, the phone's stamp line, and the Receipt # and Fingerprint columns in the accountant's download.
 - The command-line checker and the tests in `tests/test_carbon*.py`, including property tests with `hypothesis`.
 - The renaming and the polish round (task 7 in the spec).
+- The review round (task 10): one name for each part, the *What Receipts measured* tab with its own label, the *Start here* strip, the live count of carbon copies, plain-word explanations, the tab bar, the Kiro configuration in `.kiro/settings/mcp.json` and `.kiro/agents/carbon-attacker.json`, and `python -m receipts.mcp_server`.
 
-The Python package is still called `receipts` and the main class `Receipts`. The measurement of 19 AI models on 19 business days belongs to Receipts and is described in its repository.
+The Python package is still called `receipts` and the main class `Receipts`. The measurement of 19 AI models on 19 business days (November 2026) belongs to Receipts and is described in its repository. The *What Receipts measured* tab and the totals in *Her book* show it. The carbon copy itself is new and is not part of those numbers.
 
 ## How it works
 
@@ -71,23 +76,30 @@ In a browser, `JSON.stringify` with keys sorted by Unicode code point (not UTF-1
 
 ## How Kiro built it
 
-Kiro wrote Carbon Copy from a spec, with the rules fixed in steering files and two hooks watching the work. Work went in task by task, one commit per task or pair of tasks.
+Kiro wrote Carbon Copy from a spec, with the rules fixed in steering files and three hooks watching the work. Work went in task by task, one commit per task or pair of tasks. This section answers the questions the Kiroween rules ask.
 
-- **Spec** (`.kiro/specs/carbon-copy/`): `requirements.md` (9 requirements), `design.md` and `tasks.md` (tasks 1 to 9).
-- **Steering** (`.kiro/steering/`): `money-rules.md` (no model decides a payment; the book is append-only; checking needs no secret; keys never enter the repo; same input gives the same fingerprint; no real money; Receipts' measurement stays untouched), `product.md` (who Carbon Copy is for and the plain-words rule for every screen) and `tech.md` (Python 3.13, FastAPI, plain HTML, JavaScript and CSS, Ed25519, the test commands).
+- **Which Kiro surface, and why.** The Kiro CLI, headless. Each task in `tasks.md` was handed to it as one instruction, in order, with the spec and the steering files as its only source of truth. The reason: a task is a unit that can be run, tested and committed on its own, and no one has to sit in a chat for it.
+- **Spec-driven, not vibe coding.** `.kiro/specs/carbon-copy/` holds `requirements.md` (10 requirements), `design.md` and `tasks.md` (tasks 1 to 10). Every task from 8 on began by writing its requirement and design into the spec, then building. The spec changed when gaps were found, five times (below).
+- **Steering** (`.kiro/steering/`): `money-rules.md` (no model decides a payment; the book is append-only; checking needs no secret; keys never enter the repo; same input gives the same fingerprint; no real money; Receipts' measurement stays untouched), `product.md` (who Carbon Copy is for, and the plain-words rule for every screen) and `tech.md` (Python 3.13, FastAPI, plain HTML, JavaScript and CSS, Ed25519, the test commands, where new code and tests go). They apply to every task.
 - **Hooks** (`.kiro/hooks/`):
-  - *Run the tests when Python changes*: each time a `.py` file is saved it runs the whole suite, so a broken check shows up at once.
-  - *Keep the book append-only*: each time `receipts/carbon.py` is saved it asks Kiro whether any code path now edits, reorders or deletes a receipt, or lets a model's output become a verdict, and to remove it if so.
-  - *No keys in the repo*: each time a file is saved it runs `tools/no_keys.py`, which refuses a file that looks like it holds a private key or seed.
-- **Tasks**: 1 the book and the check; 2 property tests; 3 the change-one demo and command-line checker; 4 wiring into Receipts; 5 the app; 6 this README; 7 the polish round after a human click-through; 9 the check stops trusting the server, after two attack reviews.
+  - *Run the tests when Python changes*: after each save of a `.py` file it runs the whole suite (`pytest -q -x`), so a broken check shows up at once.
+  - *Keep the book append-only*: after each save of `receipts/carbon.py` it asks Kiro whether any code path now edits, reorders or deletes a receipt, or lets a model's output become a verdict, and to remove it if so.
+  - *No keys in the repo*: after each save of any file it runs `tools/no_keys.py`, which fails when a file looks like it holds a private key, a seed or a provider token. It needs no keys and no network, and it runs after each save.
+- **Property-based tests.** `tests/test_carbon.py` uses `hypothesis`: any list of events gives an intact book; changing any one field of any one receipt is caught at that receipt; removing any one receipt, cutting receipts off the end or swapping two is caught; any book survives a trip through the browser's `JSON.parse` and `JSON.stringify`. `tests/test_carbon_parity.py` runs the browser's check under `node` against the same books. The suite runs with no network and no keys.
+- **MCP.** Two uses. The app mounts Receipts' own MCP server at `/mcp`: the same PayPal tool names as PayPal's server, with every money move checked first. Since task 10 that server also starts over stdio with `python -m receipts.mcp_server`, and `.kiro/settings/mcp.json` registers it as `carbon-copy` so Kiro can call its tools. The registration was added in task 10; tasks 1 to 9 did not use it.
+- **Custom agent.** `.kiro/agents/carbon-attacker.json` is an agent whose whole job is to attack the book: forge it, rewrite it, hide a change, cause a false alarm, using `python -m receipts.carbon verify` and `pytest`, on copies only, and to report only what it proved. It may write only to `scratch_attacks/`, which git ignores. The profile was added in task 10; this repository holds no record of a run of it yet.
+- **Powers.** None were used. There is no power installed or referenced in this repository.
+- **Not confirmed.** The two Kiro files follow the format in the Kiro docs (kiro.dev/docs/custom-agents/configuration-reference) but were not loaded in a Kiro session while writing them. In particular the relative `.venv\Scripts\python.exe` in `mcp.json` assumes Kiro starts the server from the workspace folder, and the shell patterns in the agent's permissions assume Kiro matches them as written. If either does not match on your machine, change that one line.
+- **Session records:** docs/kiro-sessions/ (the build records the team will add).
+- **Tasks**: 1 the book and the check; 2 property tests; 3 the change-one demo and command-line checker; 4 wiring into Receipts; 5 the app; 6 this README; 7 the polish round after a human click-through; 8 the Carbon copy tab shows the run Maya saw; 9 the check stops trusting the server, after two attack reviews; 10 what a judge trips on (a review against the Kiroween rules).
 
-The spec changed when gaps were found, four times:
+The spec changed when gaps were found, five times:
 
 1. **The signed count.** A hash chain cannot show that the last receipts were deleted, since every receipt left still links up. The book now carries a signed count and the check compares it to the receipts.
 2. **The phone's stamp.** A book can be cut back to an older length with its older signed count put back. The owner's phone now keeps a stamp outside the book, and a book shorter than a stamp is reported as changed.
 3. **The browser round-trip rule.** A false alarm: a book that went through a browser failed its own check, because a browser writes 1836.0 as 1836 and the bytes changed. Whole-number floats are now normalised before hashing, so a book that passes through `JSON.parse` and `JSON.stringify` still checks out.
 4. **The check trusted the server.** Two attack reviews re-signed a book under a new key and flipped Maya's decline to approved, and it read intact; the stamps lived on the server; "Check the book" asked the server. Requirement 9 and task 9 moved the stamps and the key to the owner's device, moved the check into the browser, made the fingerprint reproducible with any JSON tool and made every stamp's signature count.
-
+5. **The screen said more than the data meant.** A review against the Kiroween rules found labels that claimed too much: "SAID: NO / SUSPICIOUS" on an AI's honest explanation (the word pattern only finds a refusal, never a suspicion), "(held)" on a receipt about the AI's words, and "Honest work done: 1 of 1" read as "nothing went wrong" after a bill was paid twice (it counts only the bills that were right to pay; the double payment is counted apart). Requirement 10 fixed the wording and left the scoring as it was. `design.md` has what was found.
 ## Limits we know about
 
 - The stand-in mirrors PayPal's API shapes. It is not PayPal. The hosted demo uses it, so no real or sandbox PayPal order is created there.

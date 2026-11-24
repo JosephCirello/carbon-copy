@@ -115,3 +115,9 @@ def build(register=None, on_event=None) -> tuple[MCPServer, Receipts]:
         return out(r.holds)
 
     return srv, r
+
+
+if __name__ == "__main__":
+    # `python -m receipts.mcp_server`: serve the same tools over stdio, so a client such as Kiro can start it from its mcp.json.
+    # Nothing is printed to standard output but the MCP protocol itself.
+    build()[0].run("stdio")

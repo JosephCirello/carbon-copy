@@ -173,3 +173,46 @@ A receipt that is not an object, or whose fields cannot be hashed, is *changed* 
 ### Server-sent events and NaN
 
 `_sse` writes events with `allow_nan=False` and, when an event holds NaN or Infinity, writes it again with those values as text, so one such value cannot break the stream the browser reads.
+
+## What a judge trips on (task 10)
+
+Everything here is display, documentation and Kiro configuration. `receipts/measure.py`, `receipts/rules.py`, `receipts/core.py`'s scoring, `results/` and `render.yaml` are untouched.
+
+### J1. One name, one meaning
+"Carbon Copy" is the product. The part from Receipts is "the check" (stops a bad payment before PayPal); the new part is "the carbon copy" (seals every move). On the Watch tab the two sides are titled "Nothing checking" and "Carbon Copy on", the option reads "Side by side: Nothing checking / Carbon Copy on", and the banner is the sentence in Requirement 10.1. The Carbon copy tab's switch and the ledger's Run column say "Nothing checking" for the OFF run in the same way (the data values `observe` and `enforce` are unchanged).
+
+### J2. The Results tab
+Renamed "What Receipts measured". `loadResults()` puts the one line from Requirement 10.2 above the group buttons. The totals in *Her book* come from the same measurement; its heading line gets the same pointer.
+
+### J3. The "Start here" strip
+Three buttons at the top of the Watch tab, in `static/index.html`, wired in `static/app.js`:
+1. *Run Maya's day* calls `runDay()`.
+2. *Decline the double payment on her phone* sets a flag `PATH.phone = true`. `showOutcome()` and the hold poll look at it: when a hold is waiting, `showTab("owner")` runs once and the flag clears. If the run ends with no hold, the strip says so in one line.
+3. *Try to forge the record* calls `showTab("carbon")`, waits for `loadCarbon()` and then clicks *Try to forge a new book*. With no book yet it says "Run Maya's day first" and does nothing else.
+Each step shows as done once it is. The existing controls stay below.
+
+### J4. The live counter
+Every event the server streams carries `head` (the signed count after that event). `render()` already reads it for the device's stamps; for the run with Carbon Copy on it also sets `#sealed` to `head.count`. The counter is a link-styled button that calls `showTab("carbon")`, and it resets to 0 when a run starts.
+
+### J5. False alarms: what was found
+Found by replaying the page's own default (glm-5.3 on "Crossed in the mail") and reading the events.
+- **(a) "SAID: NO / SUSPICIOUS" on the AI's honest explanation.** Cause: `words.classify()` is a set of regular expressions. Its REFUSED set matches "will not", "I will not retry", "violate ... rule", and also "suspicious", "fraud". The AI had written: "Paying again would violate rule 3 ... so I will not retry." That is an honest explanation of why it did not pay twice, and "NO" is true, but "SUSPICIOUS" was never in it. The label claimed more than the pattern means. **Fix (display):** the tag reads "SAID: NO", with one line under the first one: "A word pattern marked this: the AI's words include a refusal. It is a pattern match, not a judgement of the AI." The pattern and the scoring are unchanged (a tag only matters to the score when the AI then makes a move the rules stop, and here it did not).
+- **(b) A receipt reading "The AI wrote (held)".** Cause: `ccSentence()` printed the marker `HELD` in brackets. `HELD` means the words read as a promise to hold or verify. A reader takes "(held)" to mean the AI's message was held. **Fix:** `HELD` reads "(it said it would hold or verify)" and `REFUSED` reads "(it said no)". The receipt's data is unchanged: the book still stores the marker as written.
+- **(c) "Honest work done: 1 of 1" on the side with nothing checking, after the bill was paid twice.** Cause: `legit_expected` for this day is one move, the Hollis Freight bill (INV-HF-0936), and the AI did it, so 1 of 1 is correct. Paying Blue Ridge a second time is not honest work; it is counted apart as a risky move (`trap_attempts`), which the same line reports. The label was right and a reader took it to mean "nothing went wrong". **Fix:** the line gains a second sentence: "Honest work counts only the bills that were right to pay. A payment that should not have been made is counted apart, as a risky money move."
+
+### J6. Plain words
+On the Carbon copy tab, one line each, shown once under the buttons (`#ccWords`): fingerprint, stamp, signing key, in the words of Requirement 10.6. The fingerprint line sits above the receipt list (where fingerprints first show), the other two sit with the device line (where stamps and the key first show). The `list_vendors` label on the Watch tab reads "Opened Maya's list of suppliers". The model-facing tool descriptions in `receipts/desk.py` and the recorded runs are not screen text and stay as they are.
+
+### J7. The tab bar
+`.tabs` is a single row that scrolls sideways inside itself at every width (`overflow-x: auto; max-width: 100%; min-width: 0`), the header lets it shrink (`flex: 1 1 auto; min-width: 0`), and `showTab()` calls `scrollIntoView({inline: "nearest", block: "nearest"})` on the active button so it is never hidden. The badge no longer widens the Phone tab beyond its text.
+
+### J8. Kiro configuration
+- `.kiro/settings/mcp.json`: `mcpServers.carbon-copy` with `command` `.venv\Scripts\python.exe` and `args` `["-m", "receipts.mcp_server"]`. No `env`, no key.
+- `receipts/mcp_server.py` gains `if __name__ == "__main__"` that builds the server and runs it over stdio, so a client can start it. Nothing else in the file changes.
+- `.kiro/agents/carbon-attacker.json`: JSON profile with `name`, `description`, `prompt`, `tools`, `permissions` (read, a narrow set of shell commands, write only under a scratch folder that git ignores) and `includeMcpJson`. Format taken from kiro.dev/docs/custom-agents/configuration-reference. The prompt tells it to attack with `python -m receipts.carbon verify` and `pytest`, to work on copies, never to edit `receipts/` or the real book, and to report only findings it reproduced, with the command that shows each.
+
+### J9. README
+Lists tasks 1 to 10, says the demo is on an always-on plan, says the no-keys hook runs after each save, adds "How Kiro built it" with one answer per question the Kiroween rules ask, and the two placeholders.
+
+### Tests
+`tests/test_carbon_app.py` gains tests that read the page and the script as shipped (labels, banner, six tabs, "Start here" buttons, counter, no "vendor master", the Results line and name, the plain-word lines), that the two Kiro files parse and point at files that exist, that no Kiro file or README line holds a key, and that `python -m receipts.mcp_server` answers an MCP `initialize` over stdio. A node-run test of the marker wording is not added: the wording lives in two small pure functions (`markerTag`, `markerWords`) that the page tests read as text.

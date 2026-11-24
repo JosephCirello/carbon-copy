@@ -8,7 +8,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&family=Special+Elite&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ag-grid-community@32.3.3/styles/ag-grid.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ag-grid-community@32.3.3/styles/ag-theme-quartz.css">
-<link rel="stylesheet" href="/static/style.css?v=2026-11-24a">
+<link rel="stylesheet" href="/static/style.css?v=2026-11-26a">
 <link rel="icon" href="data:,">
 </head>
 <body>
@@ -25,7 +25,7 @@
     <button data-tab="rules" title="Maya's rules in her own words, and what Carbon Copy enforces">Her rules</button>
     <button data-tab="ledger" title="Every money move any AI tried, and what Carbon Copy did">Her book</button>
     <button data-tab="carbon" title="Every move the AI made, sealed so nobody can quietly change it">Carbon copy</button>
-    <button data-tab="results" title="What we measured: 19 AI models, 19 business days">Results</button>
+    <button data-tab="results" title="What Receipts, the project Carbon Copy is built on, measured: 19 AI models, 19 business days">What Receipts measured</button>
   </nav>
   <div class="env" id="env">PayPal: …</div>
 </header>
@@ -34,16 +34,23 @@
   <!-- LIVE -->
   <section id="tab-live" class="tab on">
     <div class="howto" id="howto">
-      <div><b>Maya's AI agent pays her bills through PayPal.</b> Watch the same AI work the same morning twice: on the left nothing checks it; on the right, Carbon Copy checks PayPal before any money leaves.</div>
+      <div><b>Maya's AI agent pays her bills through PayPal.</b> Carbon Copy checks each payment before it leaves (using Receipts, our earlier checker) and seals every move into a carbon-copy book nobody can quietly rewrite.</div>
       <button class="x" id="howtoX" aria-label="Dismiss">&times;</button>
     </div>
+    <ol class="start" id="startHere" aria-label="Start here">
+      <li class="start-h">Start here</li>
+      <li><button type="button" class="go" id="path1"><span class="n">1</span>Run Maya's day</button></li>
+      <li><button type="button" class="go" id="path2"><span class="n">2</span>Decline the double payment on her phone</button></li>
+      <li><button type="button" class="go" id="path3"><span class="n">3</span>Try to forge the record</button></li>
+      <li class="start-note" id="pathNote" role="status" aria-live="polite"></li>
+    </ol>
     <div class="controls">
       <label>Day at Maya's shop<select id="scn"></select></label>
       <label>AI model<select id="model"></select></label>
       <details class="more"><summary>More options</summary>
         <div class="more-body">
           <label>Source<select id="source"><option value="recorded">Recorded real run (replayed through PayPal now)</option><option value="live">Live model run</option></select></label>
-          <label class="chk"><input type="checkbox" id="sbs" checked> Side by side: Carbon Copy off / on</label>
+          <label class="chk"><input type="checkbox" id="sbs" checked> Side by side: Nothing checking / Carbon Copy on</label>
         </div>
       </details>
     </div>
@@ -56,12 +63,12 @@
     <div class="outcome" id="outcome" hidden></div>
     <div class="arms" id="arms">
       <div class="arm off" id="arm-observe">
-        <div class="arm-head"><div><div class="arm-title">Without Carbon Copy</div><div class="arm-sub" id="sub-observe">Nothing checks the AI's payments</div></div>
+        <div class="arm-head"><div><div class="arm-title">Nothing checking</div><div class="arm-sub" id="sub-observe">Nothing checks the AI's payments</div></div>
           <div class="meter"><div class="m-label">Left the business wrongly</div><div class="m-val bad" id="lost-observe">$0.00</div></div></div>
         <div class="feed" id="feed-observe"></div>
       </div>
       <div class="arm on" id="arm-enforce">
-        <div class="arm-head"><div><div class="arm-title">With Carbon Copy</div><div class="arm-sub" id="sub-enforce">Carbon Copy checks PayPal before any money leaves</div></div>
+        <div class="arm-head"><div><div class="arm-title">Carbon Copy on</div><div class="arm-sub" id="sub-enforce">The check looks at PayPal before any money leaves</div><button type="button" class="sealed" id="sealed" title="Open the carbon copies">Carbon copies sealed: <b id="sealedN">0</b></button></div>
           <div class="meter"><div class="m-label">Stopped before PayPal</div><div class="m-val good" id="lost-enforce">$0.00</div></div></div>
         <div class="feed" id="feed-enforce"></div>
       </div>
@@ -90,6 +97,7 @@
         </div>
       </div>
       <div class="owner-side">
+        <p class="phone-next" id="phoneNext" hidden><button type="button" class="go" id="phoneNextBtn">Next: try to forge the record</button></p>
         <h2>One tap, with the reason</h2>
         <p>When a money move needs the owner, Carbon Copy holds it and sends this card. Approve, and it goes to PayPal right then. Decline, and it never does.</p>
         <p>Every reason on a card is built only from facts Carbon Copy looked up: the list of suppliers she pays, her phone log, and PayPal's own records of the order, the payment, the refunds and the delivery tracking.</p>
@@ -118,6 +126,7 @@
   <section id="tab-ledger" class="tab">
     <div class="ledger-head">
       <h2>Maya's book: every money move an agent tried, and what Carbon Copy did</h2>
+      <p class="ledger-note">The totals below come from Receipts' measurement of 19 AI models over 19 business days. The carbon copy itself is new and is not part of these numbers.</p>
       <div class="ledger-tools">
         <input id="quick" placeholder="Search: a model, a supplier, an invoice…">
         <button id="exportCsv" class="ghost" title="Every decision in this view, with its reason, as a spreadsheet">Download for the accountant</button>
@@ -140,10 +149,11 @@
       <div class="cc-head">
         <h2>The carbon copies</h2>
         <p class="cc-sub" id="ccSub"></p>
+        <p class="cc-word" id="ccWordFp"><b>Fingerprint:</b> a short code computed from the receipt; change one letter and it changes.</p>
         <div class="cc-switch" id="ccSwitch" role="group" aria-label="Which book to show" hidden>
           <span>Showing:</span>
           <button type="button" data-mode="enforce" aria-pressed="true">Carbon Copy on (the run Maya saw)</button>
-          <button type="button" data-mode="observe" aria-pressed="false">Carbon Copy off (nothing checked it)</button>
+          <button type="button" data-mode="observe" aria-pressed="false">Nothing checking (the run with no check)</button>
         </div>
         <div class="cc-tools">
           <button class="go" id="ccCheck">Check the book</button>
@@ -153,6 +163,8 @@
           <label class="chk"><input type="checkbox" id="ccDev"> Developer view</label>
         </div>
         <p class="cc-device" id="ccDevice"></p>
+        <p class="cc-word"><b>Stamp:</b> a sealed note your device keeps of how long the book was at that moment.</p>
+        <p class="cc-word"><b>Signing key:</b> the seal's owner; your device remembers the first one it sees and refuses any other.</p>
           <div class="cc-result" id="ccResult" aria-live="polite"></div>
       </div>
       <div class="cc-book" id="ccBook"></div>
@@ -169,6 +181,6 @@
 
 <script src="/static/carbon_verify.js?v=2026-11-25a"></script>
 <script src="https://cdn.jsdelivr.net/npm/ag-grid-community@32.3.3/dist/ag-grid-community.min.js"></script>
-<script src="/static/app.js?v=2026-11-25a"></script>
+<script src="/static/app.js?v=2026-11-26a"></script>
 </body>
 </html>

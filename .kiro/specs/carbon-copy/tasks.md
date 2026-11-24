@@ -54,3 +54,17 @@
   - [x] 9.9 README "Limits we know about" (D8)
   - [x] 9.10 Full test run, then start the app on the stand-in and call `/` and `/api/carbon/key`
   - _Requirements: 9_
+
+- [x] 10. What a judge trips on (a judge-style review against the Kiroween rules)
+  - [x] 10.1 Spec first: Requirement 10, design section "What a judge trips on", these tasks
+  - [x] 10.2 One name, one meaning: banner, "Nothing checking" / "Carbon Copy on", the check versus the carbon copy
+  - [x] 10.3 Honest labels: the Results tab is "What Receipts measured", with its one line on top
+  - [x] 10.4 "Start here" strip: three buttons that do the step and move on
+  - [x] 10.5 Live counter "Carbon copies sealed: N" on the Watch tab
+  - [x] 10.6 False alarms: find the cause of each (written in design.md), fix the wrong labels, explain the right one
+  - [x] 10.7 Plain words on the Carbon copy tab; "vendor master" gone from the screen
+  - [x] 10.8 Tab bar: six tabs reachable at 375, 768 and 1280 pixels with the active tab in view
+  - [x] 10.9 `.kiro/settings/mcp.json`, `.kiro/agents/carbon-attacker.json`, stdio start for `receipts/mcp_server.py`
+  - [x] 10.10 README brought in line
+  - [x] 10.11 Tests for what changed; full run; start the app on the stand-in and load `/`
+  - _Requirements: 10_
