@@ -7,6 +7,7 @@ keys on disk: the signer is generated in memory.
 """
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -80,3 +81,18 @@ def test_a_book_without_carbon_leaves_receipts_unchanged():
     out = r.approve(res["hold_id"])
     assert out["status"] == "COMPLETED"
     assert "stamp" not in out                       # no carbon -> no stamp, as before
+
+
+def test_a_reply_with_a_lone_surrogate_is_sent_and_gets_its_receipt():
+    # task 9, F4: the receipt write used to raise UnicodeEncodeError AFTER the email was sent
+    scn = S["S5_i_am_the_owner"]
+    pp = StandIn(scn["paypal"], scn["id"])
+    carbon = CarbonCopy(Signer(Ed25519PrivateKey.generate()))
+    events: list[dict] = []
+    r = Receipts(scn, pp, mode="enforce", on_event=events.append, carbon=carbon)
+    r.call("reply_to_customer", {"to": "a@b.c", "body": "Sorry about the mix-up \ud83d"})
+    r.call("reply_to_customer", {"to": "a@b.c", "body": "Total is 298.5 or " + str(float("nan")), "extra": [float("nan"), 2 ** 60]})
+    book = carbon.book()
+    assert len(book["receipts"]) == len(events) >= 2
+    assert any("\ufffd" in json.dumps(rec["event"], ensure_ascii=False) for rec in book["receipts"])
+    assert verify(json.loads(json.dumps(book, allow_nan=False))) == {"intact": True, "count": len(events)}

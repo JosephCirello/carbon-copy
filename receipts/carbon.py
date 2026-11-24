@@ -11,8 +11,8 @@ learn whether the book is intact or which receipt was first changed, in plain
 words.
 
 The private signing key never leaves this module: it comes from the
-``CARBON_COPY_KEY`` environment variable (a 32-byte Ed25519 seed in hex) or is
-generated in memory at start-up. Verifying the book needs only the receipts and
+``CARBON_COPY_KEY`` environment variable (64 hex characters are the Ed25519 seed;
+any other text is hashed into one) or is generated in memory at start-up. Verifying the book needs only the receipts and
 the public key — and, to catch a book cut back to an older signed count, the
 owner's phone stamps. No secret is ever needed to check.
 """
@@ -22,8 +22,11 @@ import base64
 import copy
 import hashlib
 import json
+import math
 import os
+import re
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -36,6 +39,75 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 
 #: The link of the first receipt: 64 zeros stand for "no receipt before this one".
 GENESIS = "0" * 64
+_HEX64 = re.compile(r"[0-9a-fA-F]{64}")
+
+
+#: The largest whole number every JSON tool (a browser's included) holds exactly.
+MAX_SAFE_INT = 2 ** 53 - 1
+_SURROGATE = re.compile("[\ud800-\udfff]")
+_MAX_DEPTH = 100
+
+
+def _clean_text(s: str) -> str:
+    """The text with every lone surrogate replaced by U+FFFD (it could not be written as UTF-8)."""
+    return _SURROGATE.sub("\ufffd", str.__str__(s))
+
+
+def safe_json(x, _depth: int = 0):
+    """The "safe JSON" form of any value: the only form that is stored, hashed and handed out.
+
+    Strings and dict keys have lone surrogates replaced by U+FFFD. An integer is kept
+    only when ``abs(n) <= 2**53 - 1``, otherwise it is written as its decimal text. A
+    float that is whole and within that range becomes an int; every other float
+    (NaN, Infinity, 298.5) becomes the text Python's ``repr`` gives. Tuples become
+    lists. Any other type (Decimal, datetime, set, bytes, an object) becomes
+    ``str(value)``. Keys are written sorted by Unicode code point (by ``canonical``). The result holds only
+    strings, safe integers, booleans, null, lists and dicts, so ``json.dumps`` can
+    never fail on it and a browser's ``JSON.stringify`` gives the same bytes. The
+    input is not changed, and no value can make this raise.
+    """
+    if x is None or isinstance(x, bool):
+        return x
+    if isinstance(x, str):
+        return _clean_text(x)
+    if isinstance(x, int):
+        n = int(x)
+        if abs(n) <= MAX_SAFE_INT:
+            return n
+        try:
+            return str(n)
+        except ValueError:      # Python refuses to write a number of thousands of digits
+            return "(a number too large to write)"
+    if isinstance(x, float):
+        f = float(x)
+        if math.isfinite(f) and f.is_integer() and abs(f) <= MAX_SAFE_INT:
+            return int(f)
+        return repr(f)
+    if _depth >= _MAX_DEPTH:
+        return _clean_text(_text_of(x))
+    if isinstance(x, dict):
+        out: dict = {}
+        for k, v in x.items():
+            key = _clean_text(k) if isinstance(k, str) else _clean_text(_text_of(k))
+            val = safe_json(v, _depth + 1)
+            # two keys that clean to the same text: the larger cleaned value wins, whatever the dict order
+            if key not in out or _sort_text(val) > _sort_text(out[key]):
+                out[key] = val
+        return out        # canonical() writes the keys sorted by code point
+    if isinstance(x, (list, tuple)):
+        return [safe_json(v, _depth + 1) for v in x]
+    return _clean_text(_text_of(x))
+
+
+def _sort_text(v) -> str:
+    return json.dumps(v, sort_keys=True, ensure_ascii=False)
+
+
+def _text_of(x) -> str:
+    try:
+        return str(x)
+    except Exception:  # noqa: BLE001  an object whose own __str__ fails still gets a stable word
+        return f"<{type(x).__name__}>"
 
 
 def normalise(x):
@@ -43,7 +115,9 @@ def normalise(x):
 
     A browser writes 1836.0 as 1836, so the same number must hash the same either
     way. Tuples become lists; dicts and lists are rebuilt (the input is not
-    changed); anything else is returned as it is and left to ``canonical``.
+    changed); anything else is returned as it is. ``safe_json`` is the full cleaning
+    step used when a receipt is written; this lighter step is what ``canonical``
+    applies to a value that is already clean.
     """
     if isinstance(x, float):
         return int(x) if x.is_integer() else x
@@ -55,18 +129,17 @@ def normalise(x):
 
 
 def canonical(x) -> bytes:
-    """The stable byte form of any JSON-shaped value.
+    """The stable byte form of a JSON-shaped value: keys sorted by code point, no
+    spaces, text as UTF-8 (no ``\\u`` escapes), whole floats as ints.
 
-    The value is normalised first (see :func:`normalise`). Keys are sorted, there
-    are no spaces, text stays as UTF-8 (no ``\\u`` escapes) and anything JSON
-    cannot represent is read through ``str``. Two values that mean the same thing
-    always produce the same bytes on any machine, so the fingerprint can never
-    depend on dict order, float formatting or platform.
+    There is no ``default=``: a value ``safe_json`` has not cleaned (a Decimal, a
+    date, a set) raises ``TypeError`` instead of being hashed one way and sent
+    another, and NaN or Infinity raise ``ValueError``. Run anything an agent wrote
+    through :func:`safe_json` first.
     """
     return json.dumps(
-        normalise(x), sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str
+        normalise(x), sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
     ).encode("utf-8")
-
 
 def fingerprint(x) -> str:
     """SHA-256 over the canonical form of ``x``, as 64 hex characters."""
@@ -82,24 +155,34 @@ class Signer:
     generated in memory is never written anywhere.
     """
 
-    __slots__ = ("_private",)
+    __slots__ = ("_private", "temporary")
 
-    def __init__(self, private_key: Ed25519PrivateKey):
+    def __init__(self, private_key: Ed25519PrivateKey, temporary: bool = False):
         self._private = private_key
+        self.temporary = temporary          # True for a key made in memory because none was set
 
     @classmethod
     def from_env(cls) -> "Signer":
-        """Read ``CARBON_COPY_KEY`` (an Ed25519 seed in hex) or make a fresh key."""
-        seed_hex = os.environ.get("CARBON_COPY_KEY")
-        if seed_hex:
-            private_key = Ed25519PrivateKey.from_private_bytes(bytes.fromhex(seed_hex))
-        else:
-            private_key = Ed25519PrivateKey.generate()
-        return cls(private_key)
+        """Read ``CARBON_COPY_KEY`` or make a fresh key in memory.
+
+        Any text is accepted: 64 hex characters are the Ed25519 seed itself; any
+        other text gives the seed SHA-256 of its UTF-8 bytes, so a generated random
+        value (a hosting service's) works as a fixed key.
+        """
+        text = os.environ.get("CARBON_COPY_KEY")
+        if text:
+            seed = bytes.fromhex(text) if _HEX64.fullmatch(text) else hashlib.sha256(text.encode("utf-8")).digest()
+            return cls(Ed25519PrivateKey.from_private_bytes(seed))
+        return cls(Ed25519PrivateKey.generate(), temporary=True)
 
     def sign(self, fp_hex: str) -> str:
         """Sign ``bytes.fromhex(fp_hex)`` and return the signature as base64."""
         return base64.b64encode(self._private.sign(bytes.fromhex(fp_hex))).decode("ascii")
+
+    @property
+    def short_key(self) -> str:
+        """The first 16 hex characters of the public key, for a footer."""
+        return self.public_key_hex[:16]
 
     @property
     def public_key_hex(self) -> str:
@@ -124,40 +207,43 @@ class CarbonCopy:
     where ``prev`` is the previous receipt's fingerprint (64 zeros for the first),
     ``fp`` is this receipt's own fingerprint and ``sig`` is a signature over
     ``bytes.fromhex(fp)``. The stored ``event`` is the event exactly as passed to
-    :meth:`append` minus its own ``"t"``.
+    :meth:`append` minus its own ``"t"``, cleaned into safe JSON (see
+    :func:`safe_json`): that cleaned form is what is stored, hashed and handed out.
     """
 
     def __init__(self, signer: Signer):
         self._signer = signer
         self._receipts: list[dict] = []
+        self._lock = threading.Lock()      # one receipt is written at a time; a stamp is read between writes
 
     def append(self, kind: str, event: dict) -> dict:
         """Build, fingerprint, sign and store one receipt; return a copy of it.
 
         The receipt's time is the event's own ``"t"`` (rounded to milliseconds so
         the stored value and the hashed value are the same number); if the event
-        carries no ``"t"`` the current time is used. The stored event is a deep copy
-        of the event minus ``"t"``, so changing the event afterwards cannot change
-        the book.
+        carries no usable ``"t"`` the current time is used. The stored event is the
+        event minus ``"t"`` cleaned by :func:`safe_json`, which is a fresh copy, so
+        changing the event afterwards cannot change the book. Whatever the event
+        holds (a lone surrogate, NaN, a huge number, a Decimal) this does not raise,
+        so an action is never left without its receipt.
         """
-        n = len(self._receipts) + 1
-        at = round(event.get("t", time.time()), 3)
-        # normalised, so what is hashed is exactly what is stored and handed out
-        ev = normalise(copy.deepcopy({k: v for k, v in event.items() if k != "t"}))
-        prev = self._receipts[-1]["fp"] if self._receipts else GENESIS
-        fp = fingerprint({"n": n, "at": at, "kind": kind, "event": ev, "prev": prev})
-        receipt = {
-            "n": n,
-            "at": at,
-            "kind": kind,
-            "event": ev,
-            "prev": prev,
-            "fp": fp,
-            "sig": self._signer.sign(fp),
-        }
-        self._receipts.append(receipt)
-        return copy.deepcopy(receipt)
-
+        ev = safe_json({k: v for k, v in event.items() if k != "t"})
+        at = _receipt_time(event.get("t"))
+        with self._lock:
+            n = len(self._receipts) + 1
+            prev = self._receipts[-1]["fp"] if self._receipts else GENESIS
+            fp = fingerprint({"n": n, "at": at, "kind": safe_json(kind), "event": ev, "prev": prev})
+            receipt = {
+                "n": n,
+                "at": at,
+                "kind": safe_json(kind),
+                "event": ev,
+                "prev": prev,
+                "fp": fp,
+                "sig": self._signer.sign(fp),
+            }
+            self._receipts.append(receipt)
+            return copy.deepcopy(receipt)
     def receipts(self) -> list[dict]:
         """Return deep copies of every receipt, so changing them cannot change the book."""
         return copy.deepcopy(self._receipts)
@@ -177,11 +263,29 @@ class CarbonCopy:
         links up. The signed head does, so the check can tell the book is short.
         """
         receipts = self.receipts()
-        count = len(receipts)
-        last_fp = receipts[-1]["fp"] if receipts else GENESIS
-        head_fp = fingerprint({"count": count, "last_fp": last_fp})
-        head = {"count": count, "last_fp": last_fp, "sig": self._signer.sign(head_fp)}
-        return {"public_key": self._signer.public_key_hex, "head": head, "receipts": receipts}
+        return {"public_key": self._signer.public_key_hex, "head": self._head(), "receipts": receipts}
+
+    def _head(self) -> dict:
+        with self._lock:
+            count = len(self._receipts)
+            last_fp = self._receipts[-1]["fp"] if self._receipts else GENESIS
+            return {"count": count, "last_fp": last_fp,
+                    "sig": self._signer.sign(fingerprint({"count": count, "last_fp": last_fp}))}
+
+    def stamp(self) -> dict:
+        """The book's signed head together with the public key that signed it: what an owner's device keeps.
+
+        ``{"count", "last_fp", "sig", "public_key"}``. Cheap (it does not copy the receipts), so it can be
+        handed out with every event.
+        """
+        return {**self._head(), "public_key": self._signer.public_key_hex}
+
+
+def _receipt_time(t) -> float:
+    """A receipt's time: the event's ``t`` rounded to milliseconds, or now when it is missing or not a finite number."""
+    if isinstance(t, bool) or not isinstance(t, (int, float)) or not math.isfinite(t):
+        t = time.time()
+    return round(float(t), 3)
 
 
 def _signature_ok(public_key_hex: str, fp_hex: str, sig_b64: str) -> bool:
@@ -189,16 +293,54 @@ def _signature_ok(public_key_hex: str, fp_hex: str, sig_b64: str) -> bool:
     for the given public key. Any tampered, malformed or mismatched input is False."""
     try:
         pub = Ed25519PublicKey.from_public_bytes(bytes.fromhex(public_key_hex))
-        pub.verify(base64.b64decode(sig_b64), bytes.fromhex(fp_hex))
+        pub.verify(base64.b64decode(sig_b64, validate=True), bytes.fromhex(fp_hex))
         return True
-    except (ValueError, InvalidSignature):
+    except (ValueError, TypeError, InvalidSignature):
         # bad public key / bad hex / bad base64 / wrong length -> not a match;
         # InvalidSignature -> a well-formed signature that does not verify.
         return False
 
 
-def verify(book: dict, stamps=None) -> dict:
-    """Check a book using only the receipts and the public key (and the stamps).
+WHY_KEY = "it was signed with a different key than the one your device trusts"
+WHY_STAMP_BAD = "a stamp on your device is damaged or forged"
+WHY_SHORT = "the book is shorter than a stamp your device already holds"
+
+
+def _changed(count: int, why: str, first_bad: int | None = None) -> dict:
+    out = {"intact": False, "count": count}
+    if first_bad is not None:
+        out["first_bad"] = first_bad
+    out["why"] = why
+    return out
+
+
+def _whole(v) -> bool:
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+def _stamp_ok(stamp, key_hex: str) -> bool:
+    """True only for a well-formed stamp whose signature verifies against ``key_hex``."""
+    if not isinstance(stamp, dict):
+        return False
+    count, last_fp, sig = stamp.get("count"), stamp.get("last_fp"), stamp.get("sig")
+    if not _whole(count) or count < 0 or not isinstance(last_fp, str) or not isinstance(sig, str):
+        return False
+    try:
+        head_fp = fingerprint({"count": count, "last_fp": last_fp})
+    except (TypeError, ValueError):
+        return False
+    return _signature_ok(key_hex, head_fp, sig)
+
+
+def verify(book: dict, stamps=None, expected_key: str | None = None) -> dict:
+    """Check a book using only the receipts, the public key and the owner's stamps.
+
+    ``expected_key`` is the public key (hex) the owner's device trusts. When it is
+    given and the book carries a different key the book is *changed* ("it was signed
+    with a different key than the one your device trusts"): a book re-signed from
+    start to end under a new key is otherwise internally perfect. Without it the
+    book's own key is used for every signature, which proves the book is consistent
+    but not who wrote it.
 
     Walks the receipts in order. For each it asks, in turn: is ``n`` the next
     number; does ``prev`` equal the previous receipt's fingerprint; does the
@@ -207,42 +349,52 @@ def verify(book: dict, stamps=None) -> dict:
 
     Returns ``{"intact": True, "count": N}`` when every receipt checks out, or
     ``{"intact": False, "count": N, "first_bad": n, "why": "<plain words>"}``
-    naming the first receipt that fails and why, in one of four plain reasons.
-    After the receipts it checks the signed head: a book with no head is *changed*
-    ("the book has no signed count"); a head whose signature does not verify is
-    *changed* ("the book's signed count was changed"); a head whose count or last
-    fingerprint does not match the receipts is *changed* ("receipts are missing
-    from the end of the book"). The head is what catches receipts removed from the
-    end, which the chain of links alone cannot show.
+    naming the first receipt that fails and why. After the receipts it checks the
+    signed head: a book with no head is *changed* ("the book has no signed count"); a
+    head whose signature does not verify is *changed* ("the book's signed count was
+    changed"); a head whose count or last fingerprint does not match the receipts is
+    *changed* ("receipts are missing from the end of the book").
 
-    Only when the book is intact on its own does it look at ``stamps`` — a list of
-    the owner's phone stamps, each a signed head handed to the phone when the
-    owner tapped. A signed count inside the book can be cut back to an older signed
-    count that still matches the receipts left; the phone holds a copy of the count
-    the book reached, outside the book. If any stamp's ``count`` is greater than the
-    number of receipts, or its ``last_fp`` is not the fingerprint of the receipt at
-    that position, the book is *changed* ("the book is shorter than a stamp the
-    owner's phone already holds"). The stamps are read only for their ``count`` and
-    ``last_fp``; a false stamp fails closed — it says *changed*.
+    Only when the book is intact on its own does it look at ``stamps``, the signed
+    heads the owner's device kept. Every stamp is checked first: it must be an object
+    with a whole-number ``count``, a text ``last_fp`` and a text ``sig``, and its
+    signature must verify against the key the device trusts (the book's key when no
+    ``expected_key``). A stamp that is malformed or forged makes the book *changed*
+    ("a stamp on your device is damaged or forged"); so does ``stamps`` that is not
+    a list. Then each stamp is compared with the book: a ``count`` beyond the end
+    gives "the book is shorter than a stamp your device already holds"; a position
+    that exists but holds another fingerprint gives "receipt #N no longer matches the
+    stamp your device kept".
     """
+    if not isinstance(book, dict):
+        return _changed(0, "this is not a carbon-copy book we can read", 1)
     receipts = book.get("receipts") or []
+    if not isinstance(receipts, list):
+        return _changed(0, "this is not a carbon-copy book we can read", 1)
     public_key = book.get("public_key", "")
+    if expected_key is not None and (
+        not isinstance(public_key, str) or not isinstance(expected_key, str)
+        or public_key.lower() != expected_key.lower()
+    ):
+        return _changed(len(receipts), WHY_KEY)
     prev_fp = GENESIS
     for i, r in enumerate(receipts):
+        if not isinstance(r, dict):
+            return _changed(len(receipts), "its content was changed", i + 1)
         n = r.get("n")
-        if n != i + 1:
-            return {"intact": False, "count": len(receipts), "first_bad": i + 1,
-                    "why": "a receipt is missing"}
+        if n != i + 1 or isinstance(n, bool):
+            return _changed(len(receipts), "a receipt is missing", i + 1)
         if r.get("prev") != prev_fp:
-            return {"intact": False, "count": len(receipts), "first_bad": n,
-                    "why": "its link to the receipt before was broken"}
-        if fingerprint({"n": n, "at": r.get("at"), "kind": r.get("kind"),
-                        "event": r.get("event"), "prev": r.get("prev")}) != r.get("fp"):
-            return {"intact": False, "count": len(receipts), "first_bad": n,
-                    "why": "its content was changed"}
+            return _changed(len(receipts), "its link to the receipt before was broken", n)
+        try:
+            content_ok = fingerprint({"n": n, "at": r.get("at"), "kind": r.get("kind"),
+                                      "event": r.get("event"), "prev": r.get("prev")}) == r.get("fp")
+        except (TypeError, ValueError):     # a value no honest book holds (NaN, a date): not the content that was signed
+            content_ok = False
+        if not content_ok:
+            return _changed(len(receipts), "its content was changed", n)
         if not _signature_ok(public_key, r.get("fp", ""), r.get("sig", "")):
-            return {"intact": False, "count": len(receipts), "first_bad": n,
-                    "why": "its signature does not match"}
+            return _changed(len(receipts), "its signature does not match", n)
         prev_fp = r.get("fp")
     # ---- the signed head: proves how many receipts the book should hold ----
     # Every receipt left still links up after receipts are cut from the end, so the
@@ -250,36 +402,35 @@ def verify(book: dict, stamps=None) -> dict:
     # signed, so the check can see the missing ones.
     head = book.get("head")
     if not isinstance(head, dict):
-        return {"intact": False, "count": len(receipts),
-                "why": "the book has no signed count"}
-    head_fp = fingerprint({"count": head.get("count"), "last_fp": head.get("last_fp")})
+        return _changed(len(receipts), "the book has no signed count")
+    try:
+        head_fp = fingerprint({"count": head.get("count"), "last_fp": head.get("last_fp")})
+    except (TypeError, ValueError):
+        return _changed(len(receipts), "the book's signed count was changed")
     if not _signature_ok(public_key, head_fp, head.get("sig", "")):
-        return {"intact": False, "count": len(receipts),
-                "why": "the book's signed count was changed"}
+        return _changed(len(receipts), "the book's signed count was changed")
     if head.get("count") != len(receipts) or head.get("last_fp") != prev_fp:
-        return {"intact": False, "count": len(receipts), "first_bad": len(receipts) + 1,
-                "why": "receipts are missing from the end of the book"}
-    # ---- the owner's phone stamps: prove the book was not cut back to an older count ----
+        return _changed(len(receipts), "receipts are missing from the end of the book", len(receipts) + 1)
+    # ---- the owner's device stamps: prove the book was not cut back or rewritten ----
     # The head inside the book closes its END, not its PAST: someone holding an older
     # signed head can cut the book back to that older length and put the older head
-    # back, and the receipts left still link up and still match. The phone holds a
-    # copy of the head outside the book; if any stamp reaches further than the
-    # receipts the book now holds, or its last_fp is not the receipt at that
-    # position, the book was cut back to an older state.
-    if stamps:
+    # back. The device holds copies of the heads it saw, outside the book. Each must
+    # be genuine (signed by the key the device trusts) before it is believed, then
+    # the book must still hold what it stamped.
+    if stamps is not None and stamps != []:
+        if not isinstance(stamps, list):
+            return _changed(len(receipts), WHY_STAMP_BAD)
+        key = expected_key if expected_key is not None else public_key
+        if not all(_stamp_ok(s, key) for s in stamps):
+            return _changed(len(receipts), WHY_STAMP_BAD)
         n = len(receipts)
         for stamp in stamps:
-            if not isinstance(stamp, dict):
-                continue
-            sc = stamp.get("count")
-            sl = stamp.get("last_fp")
-            if not isinstance(sc, int) or not isinstance(sl, str):
-                continue
-            if sc > n or (1 <= sc <= n and receipts[sc - 1].get("fp") != sl):
-                return {"intact": False, "count": n, "first_bad": sc,
-                        "why": "the book is shorter than a stamp the owner's phone already holds"}
+            sc, sl = stamp["count"], stamp["last_fp"]
+            if sc > n:
+                return _changed(n, WHY_SHORT, sc)
+            if (sc >= 1 and receipts[sc - 1].get("fp") != sl) or (sc == 0 and sl != GENESIS):
+                return _changed(n, f"receipt #{sc} no longer matches the stamp your device kept", max(sc, 1))
     return {"intact": True, "count": len(receipts)}
-
 
 def _different_value(v):
     """A value of the same rough kind as ``v`` but never equal to it, for the tamper demo."""
@@ -288,7 +439,8 @@ def _different_value(v):
     if isinstance(v, (int, float)):
         return v + 1
     if isinstance(v, str):
-        return v + "!"
+        number = _number_in(v)
+        return repr(number + 1) if number is not None else v + "!"
     if isinstance(v, list):
         return [*v, "tampered"]
     if isinstance(v, dict):
@@ -296,7 +448,20 @@ def _different_value(v):
     return "tampered"
 
 
+def _number_in(v):
+    """The number a text such as "298.5" holds (an amount the book wrote as text), else None."""
+    if isinstance(v, str):
+        try:
+            f = float(v)
+        except ValueError:
+            return None
+        return f if math.isfinite(f) else None
+    return None
+
+
 def _usd(v) -> str:
+    if isinstance(v, str) and _number_in(v) is not None:
+        v = _number_in(v)
     return f"${v:,.2f}" if isinstance(v, (int, float)) and not isinstance(v, bool) else str(v)
 
 
@@ -328,22 +493,16 @@ def _owner_story(receipts: list, idx: int, before: str, after: str) -> str:
             f"She {was.get(before, before)} it.")
 
 
-def tamper_demo(book: dict, n: int | None = None) -> dict:
-    """Show the check catching a change to one receipt, without touching the real book.
+def _change_one(book: dict, n: int | None = None) -> tuple[dict, dict]:
+    """A deep copy of ``book`` with one value changed in one receipt, and what was changed.
 
-    Deep-copies the book and changes one value in one receipt's event, then runs
-    :func:`verify` on the copy. When the book holds an owner action, THAT receipt is
-    the one changed: a "declined" becomes "approved", the exact lie the book exists to
-    catch (a record edited afterwards to say the owner approved a payment she
-    declined). With no owner action it changes the amount of the latest money move,
-    else another field (or the receipt's ``kind`` when the event is empty). Returns the
-    receipt number, the field changed, the before and after values, the result and
-    ``say``, the change in plain words. The book passed in is never modified.
+    Which receipt and which value is explained in :func:`tamper_demo`. The book passed in is never modified.
+    Returns ``(copy, {"n", "field", "before", "after", "say"})``; ``n`` is None when the book has no receipts.
     """
     work = copy.deepcopy(book)
     receipts = work.get("receipts") or []
     if not receipts:
-        return {"n": None, "field": None, "before": None, "after": None, "say": None, "result": verify(work)}
+        return work, {"n": None, "field": None, "before": None, "after": None, "say": None}
     if n is not None:
         idx = n - 1
     else:
@@ -378,7 +537,50 @@ def tamper_demo(book: dict, n: int | None = None) -> dict:
             rec["kind"] = after
         say = (f"We changed receipt #{idx + 1} from {_show(field, before)} to {_show(field, after)} "
                f"in a copy of the book.")
-    return {"n": idx + 1, "field": field, "before": before, "after": after, "say": say, "result": verify(work)}
+    return work, {"n": idx + 1, "field": field, "before": before, "after": after, "say": say}
+
+
+def forge_demo(book: dict, n: int | None = None) -> dict:
+    """The real attack, built for the demo: a whole new book that says something else and reads perfect on its own.
+
+    Makes the same change as :func:`tamper_demo` (Maya's "declined" flipped to "approved" when the book holds an
+    owner action), then rebuilds EVERY receipt with fresh links and fingerprints and signs each one, and a new
+    signed head, with a brand-new key made here and thrown away. Checked alone, with the key it carries, the forged
+    book is intact; checked against the key the owner's device trusts it is not. The book passed in is never
+    modified. Returns ``{"book", "n", "field", "before", "after", "say"}``; ``book`` is None for an empty book.
+    """
+    work, what = _change_one(book, n)
+    if what["n"] is None:
+        return {"book": None, **what}
+    signer = Signer(Ed25519PrivateKey.generate())
+    prev = GENESIS
+    for r in work["receipts"]:
+        r["prev"] = prev
+        r["fp"] = fingerprint({"n": r.get("n"), "at": r.get("at"), "kind": r.get("kind"),
+                               "event": r.get("event"), "prev": prev})
+        r["sig"] = signer.sign(r["fp"])
+        prev = r["fp"]
+    head_fp = fingerprint({"count": len(work["receipts"]), "last_fp": prev})
+    work["head"] = {"count": len(work["receipts"]), "last_fp": prev, "sig": signer.sign(head_fp)}
+    work["public_key"] = signer.public_key_hex
+    return {"book": work, **what}
+
+
+def tamper_demo(book: dict, n: int | None = None) -> dict:
+    """Show the check catching a change to one receipt, without touching the real book.
+
+    Deep-copies the book and changes one value in one receipt's event, then runs
+    :func:`verify` on the copy. When the book holds an owner action, THAT receipt is
+    the one changed: a "declined" becomes "approved", the exact lie the book exists to
+    catch (a record edited afterwards to say the owner approved a payment she
+    declined). With no owner action it changes the amount of the latest money move,
+    else another field (or the receipt's ``kind`` when the event is empty). Returns the
+    receipt number, the field changed, the before and after values, the result and
+    ``say``, the change in plain words. The book passed in is never modified.
+    """
+    work, what = _change_one(book, n)
+    return {**what, "result": verify(work)}
+
 
 def _plain(result: dict) -> str:
     """One line in plain words: intact with the count, or the first changed receipt."""
@@ -390,10 +592,11 @@ def _plain(result: dict) -> str:
 
 
 def _main(argv=None) -> int:
-    """``python -m receipts.carbon verify <book.json> [--stamps <stamps.json>]``.
+    """``python -m receipts.carbon verify <book.json> [--stamps <stamps.json>] [--key <hex>]``.
 
-    Prints *intact* with the count, or the first changed receipt in plain words, and
-    exits 0 when intact, 1 when changed.
+    Prints *intact* with the count, or the first changed receipt in plain words.
+    Exits 0 when intact, 1 when changed, 2 when a file could not be read (one plain
+    line on standard error, never a traceback). ``--key`` is the public key to trust.
     """
     import argparse
 
@@ -401,21 +604,30 @@ def _main(argv=None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     verify_p = sub.add_parser("verify", help="check a book and print intact or the first changed receipt")
     verify_p.add_argument("book", help="path to a book JSON file")
-    verify_p.add_argument("--stamps", help="path to a JSON list of the owner's phone stamps")
+    verify_p.add_argument("--stamps", help="path to a JSON list of the owner's device stamps")
+    verify_p.add_argument("--key", help="the public key to trust, 64 hex characters (a book signed with another key is changed)")
     args = parser.parse_args(argv)
 
     if args.command == "verify":
+        if args.key is not None and not _HEX64.fullmatch(args.key):
+            print("could not use the key: it must be 64 hex characters", file=sys.stderr)
+            return 2
         try:
             book = json.loads(Path(args.book).read_text(encoding="utf-8-sig"))
             stamps = json.loads(Path(args.stamps).read_text(encoding="utf-8-sig")) if args.stamps else None
-        except (OSError, json.JSONDecodeError) as exc:
-            print(f"could not read the book: {exc}", file=sys.stderr)
-            return 1
-        out = verify(book, stamps)
+        except (OSError, ValueError) as exc:      # missing file, not UTF-8 (UnicodeDecodeError), not JSON
+            print(f"could not read the file: {exc}", file=sys.stderr)
+            return 2
+        if not isinstance(book, dict):
+            print("could not read the file: it is not a carbon-copy book", file=sys.stderr)
+            return 2
+        try:
+            out = verify(book, stamps, expected_key=args.key)
+        except Exception:  # noqa: BLE001  a book that breaks the check is not intact
+            out = {"intact": False, "count": 0, "why": "this is not a carbon-copy book we can read"}
         print(_plain(out))
         return 0 if out.get("intact") else 1
-    return 1
-
+    return 2
 
 if __name__ == "__main__":
     sys.exit(_main())

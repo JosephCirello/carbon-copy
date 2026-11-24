@@ -3,7 +3,67 @@ const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const usd = (n) => (n == null || isNaN(n) ? "" : "$" + Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
 const META = { scenarios: [], models: [] };
-const ARMS = {};
+
+/* ---------- this device: the key it trusts and the stamps it kept ----------
+   Trust on first use: the first stamp this device receives pins the signing key. Every stamp it receives is kept whole
+   ({count, last_fp, sig, public_key}), per run, in localStorage. Every storage access is in try/catch; when storage is
+   not available the device keeps them in memory and the Carbon copy tab says so. The check in carbon_verify.js reads
+   only these, never what the server says about itself. */
+const DEVICE = { pinned: null, stamps: {}, runs: [], loaded: false, saved: true };
+const DEV_KEY = "cc.pinned_key", DEV_STAMPS = "cc.stamps.", DEV_RUNS = "cc.runs", DEV_MAX_RUNS = 12;
+function devStore(op, k, v) {
+  try {
+    if (op === "get") return localStorage.getItem(k);
+    if (op === "set") localStorage.setItem(k, v);
+    if (op === "del") localStorage.removeItem(k);
+    return null;
+  } catch { DEVICE.saved = false; return null; }
+}
+function deviceLoad() {
+  if (DEVICE.loaded) return;
+  DEVICE.loaded = true;
+  const probe = "cc.probe";
+  devStore("set", probe, "1");
+  if (devStore("get", probe) !== "1") DEVICE.saved = false;
+  devStore("del", probe);
+  const pinned = devStore("get", DEV_KEY);
+  if (/^[0-9a-f]{64}$/i.test(pinned || "")) DEVICE.pinned = pinned.toLowerCase();
+  try { const runs = JSON.parse(devStore("get", DEV_RUNS) || "[]"); if (Array.isArray(runs)) DEVICE.runs = runs.filter((r) => typeof r === "string").slice(-DEV_MAX_RUNS); } catch {}
+}
+const devPlainStamp = (s) => s && typeof s === "object" && !Array.isArray(s) && Number.isInteger(s.count) && s.count >= 0
+  && typeof s.last_fp === "string" && typeof s.sig === "string" && /^[0-9a-f]{64}$/i.test(s.public_key || "");
+function deviceStamps(run) {
+  deviceLoad();
+  if (!run) return [];
+  if (!DEVICE.stamps[run]) {
+    let list = [];
+    try { const got = JSON.parse(devStore("get", DEV_STAMPS + run) || "[]"); if (Array.isArray(got)) list = got.filter(devPlainStamp); } catch {}
+    DEVICE.stamps[run] = list;
+  }
+  return DEVICE.stamps[run];
+}
+function deviceKeep(run, stamp) {
+  deviceLoad();
+  if (!run || !devPlainStamp(stamp)) return;
+  const whole = { count: stamp.count, last_fp: stamp.last_fp, sig: stamp.sig, public_key: stamp.public_key.toLowerCase() };
+  if (!DEVICE.pinned) { DEVICE.pinned = whole.public_key; devStore("set", DEV_KEY, DEVICE.pinned); }       // first use: trust this key
+  const list = deviceStamps(run);
+  if (list.some((s) => s.count === whole.count && s.last_fp === whole.last_fp && s.sig === whole.sig && s.public_key === whole.public_key)) return;
+  list.push(whole);
+  devStore("set", DEV_STAMPS + run, JSON.stringify(list));
+  if (!DEVICE.runs.includes(run)) {
+    DEVICE.runs.push(run);
+    while (DEVICE.runs.length > DEV_MAX_RUNS) { const old = DEVICE.runs.shift(); delete DEVICE.stamps[old]; devStore("del", DEV_STAMPS + old); }
+    devStore("set", DEV_RUNS, JSON.stringify(DEVICE.runs));
+  }
+}
+function devicePinned() { deviceLoad(); return DEVICE.pinned; }
+function deviceForget() {
+  deviceLoad();
+  DEVICE.runs.forEach((r) => devStore("del", DEV_STAMPS + r));
+  devStore("del", DEV_RUNS); devStore("del", DEV_KEY);
+  DEVICE.pinned = null; DEVICE.stamps = {}; DEVICE.runs = [];
+}const ARMS = {};
 
 /* ---------- tabs ---------- */
 document.querySelectorAll("#tabs button").forEach((b) =>
@@ -197,8 +257,10 @@ const BADGE = { observe: { ALLOW: "CARBON COPY WOULD ALLOW", HOLD: "CARBON COPY 
 
 function render(mode, e) {
   const A = ARMS[mode];
+  if (e.type === "session") A.session = e.session;
+  if (e.head && A.session) deviceKeep(A.session, e.head);       // every event carries a signed stamp of the book at that moment
   switch (e.type) {
-    case "session": A.session = e.session; $("#sub-" + mode).textContent = mode === "observe" ? "Nothing checks the AI's payments" : "Carbon Copy checks PayPal before any money leaves";
+    case "session": $("#sub-" + mode).textContent = mode === "observe" ? "Nothing checks the AI's payments" : "Carbon Copy checks PayPal before any money leaves";
       $("#sub-" + mode).title = `PayPal ${e.backend}`;
       if (e.note) add(mode, `<div class="replay-tag">${esc(e.note)}</div>`);
       break;
@@ -333,7 +395,7 @@ function drawHolds() {
     }
     if (res.ok) {
       const j = await res.json().catch(() => null);
-      if (j && j.stamp && Number.isInteger(j.stamp.count)) PHONE_STAMPS[b.dataset.s + "/" + b.dataset.h] = j.stamp.count;
+      if (j && j.stamp && Number.isInteger(j.stamp.count)) { PHONE_STAMPS[b.dataset.s + "/" + b.dataset.h] = j.stamp.count; deviceKeep(b.dataset.s, j.stamp); }
     }
     if (!res.ok) expireHold(b.dataset.s, b.dataset.h);      // the server no longer has this payment (404 after a restart)
     pollHolds();
@@ -394,17 +456,19 @@ function ccSentence(r) {                         // one plain sentence for one r
 }
 const esc0 = (s) => String(s ?? "");
 function ccStamp(res) {                          // the rubber stamp: a word in type, never a picture
-  return res.intact ? `<div class="stamp ok" role="img" aria-label="The book is intact">INTACT</div>`
-    : `<div class="stamp bad" role="img" aria-label="The book was changed at receipt ${esc(res.first_bad)}">CHANGED AT #${esc(res.first_bad)}</div>`;
+  if (res.intact) return `<div class="stamp ok" role="img" aria-label="The book is intact">INTACT</div>`;
+  if (res.first_bad == null) return `<div class="stamp bad" role="img" aria-label="The book was changed">CHANGED</div>`;
+  return `<div class="stamp bad" role="img" aria-label="The book was changed at receipt ${esc(res.first_bad)}">CHANGED AT #${esc(res.first_bad)}</div>`;
 }
-function ccFmt(field, v) { return field === "amount" && typeof v === "number" ? usd(v) : typeof v === "object" ? JSON.stringify(v) : String(v); }
+function ccFmt(field, v) { return field === "amount" && (typeof v === "number" || (typeof v === "string" && v.trim() !== "" && !isNaN(v))) ? usd(v) : typeof v === "object" ? JSON.stringify(v) : String(v); }
 function drawCarbon() {
   const box = $("#ccBook"), has = CC && CC.receipts && CC.receipts.length;
   const hasBook = !!has;
   const sw = $("#ccSwitch");
   sw.hidden = !(CC && CC.has_twin);
   if (CC && CC.mode) sw.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === CC.mode)));
-  ["#ccCheck", "#ccTamper", "#ccDownload"].forEach((s) => ($(s).disabled = !hasBook));
+  ["#ccCheck", "#ccTamper", "#ccForge", "#ccDownload"].forEach((s) => ($(s).disabled = !hasBook));
+  drawDevice();
   if (!hasBook) {
     $("#ccSub").textContent = CC_EMPTY;
     $("#ccResult").innerHTML = ""; box.innerHTML = "";
@@ -428,8 +492,41 @@ async function loadCarbon() {
   } catch { return; }
   drawCarbon();
 }
-function bookParts() {
-  return { book: { public_key: CC.public_key, head: CC.head, receipts: CC.receipts }, stamps: CC.stamps || [] };
+function bookParts() {                           // the book as the server sent it, and what THIS DEVICE kept (never the server's list of stamps)
+  return { book: { public_key: CC.public_key, head: CC.head, receipts: CC.receipts }, stamps: deviceStamps(CC.session), trusted_key: devicePinned() };
+}
+const short = (k) => String(k || "").slice(0, 16);
+function drawDevice() {                          // plain words about what this device holds, under the buttons
+  const el = $("#ccDevice");
+  deviceLoad();
+  const n = CC && CC.session ? deviceStamps(CC.session).length : 0, key = devicePinned();
+  const parts = [];
+  parts.push(key ? `This device trusts the signing key ${short(key)} and holds ${n} stamp${n === 1 ? "" : "s"} for this run.`
+    : "This device has not seen the signing key yet. Run the day on the Watch tab first, so it can keep the key and the stamps.");
+  if (!DEVICE.saved) parts.push("This device cannot save stamps, so it keeps them only until you close this page.");
+  el.innerHTML = esc(parts.join(" ")) + (key ? ` <button type="button" class="cc-link" id="ccForget">Forget what this device trusts</button>` : "");
+  const f = $("#ccForget");
+  if (f) f.addEventListener("click", () => { deviceForget(); $("#ccResult").innerHTML = ""; drawDevice(); });
+}
+/* The check, on this device: the book, this device's stamps, this device's pinned key. Falls back to the server only when
+   the browser has no Ed25519, and says so. Returns {out, where}. */
+async function checkOnDevice(book) {
+  const stamps = deviceStamps(CC.session), key = devicePinned();
+  if (window.CarbonVerify && await window.CarbonVerify.supportsEd25519()) {
+    return { out: await window.CarbonVerify.verify(book, stamps, key), where: "browser" };
+  }
+  const res = await fetch("/api/carbon/verify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ book, stamps, expected_key: key }) });
+  if (!res.ok) return null;
+  return { out: await res.json(), where: "server" };
+}
+const ccWhere = (where) => where === "browser"
+  ? `<p class="cc-where">Checked in your browser</p>`
+  : `<p class="cc-where warn">This browser cannot check the seals itself (it has no Ed25519), so the server checked, using the stamps and key this device holds.</p><p class="cc-where warn">Checked by the server</p>`;
+function ccNotes() {                             // what the check could not rely on, in plain words
+  const key = devicePinned(), n = CC && CC.session ? deviceStamps(CC.session).length : 0;
+  if (!key) return `<p class="cc-say">This device has not seen the signing key yet, so the check can only compare the book with itself.</p>`;
+  if (!n) return `<p class="cc-say">This device kept no stamp for this run, so it cannot tell whether the end of the book was rewritten.</p>`;
+  return "";
 }
 $("#ccDev").addEventListener("change", drawCarbon);
 $("#ccSwitch").addEventListener("click", (ev) => {
@@ -440,10 +537,11 @@ $("#ccSwitch").addEventListener("click", (ev) => {
 });
 $("#ccCheck").addEventListener("click", async () => {
   if (!CC) return;
-  const res = await fetch("/api/carbon/verify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(bookParts()) });
-  if (!res.ok) { $("#ccResult").textContent = "The check did not run. Try again."; return; }
-  const out = await res.json();
-  $("#ccResult").innerHTML = ccStamp(out) + `<p class="cc-say">${out.intact ? `All ${out.count} receipts are as they were written.` : esc(out.why || "")}</p>`;
+  let got = null;
+  try { got = await checkOnDevice({ public_key: CC.public_key, head: CC.head, receipts: CC.receipts }); } catch { got = null; }
+  if (!got) { $("#ccResult").textContent = "The check did not run. Try again."; return; }
+  const out = got.out;
+  $("#ccResult").innerHTML = ccStamp(out) + `<p class="cc-say">${out.intact ? `All ${out.count} receipts are as they were written.` : esc(out.why || "")}</p>` + ccWhere(got.where) + ccNotes();
 });
 $("#ccTamper").addEventListener("click", async () => {
   if (!CC) return;
@@ -451,7 +549,22 @@ $("#ccTamper").addEventListener("click", async () => {
   if (!res.ok) { $("#ccResult").textContent = "There is nothing to change yet."; return; }
   const t = await res.json(), r = t.result || {};
   const what = t.n == null ? "" : `<p class="cc-say">${esc(t.say || `We changed receipt #${t.n} from ${ccFmt(t.field, t.before)} to ${ccFmt(t.field, t.after)} in a copy of the book.`)} The real book was not touched.</p>`;
-  $("#ccResult").innerHTML = what + ccStamp(r) + `<p class="cc-say">${esc(r.why || "")}</p>`;
+  $("#ccResult").innerHTML = what + ccStamp(r) + `<p class="cc-say">${esc(r.why || "")}</p><p class="cc-where warn">Checked by the server</p>`;
+});
+$("#ccForge").addEventListener("click", async () => {
+  if (!CC) return;
+  if (!devicePinned()) { $("#ccResult").innerHTML = `<p class="cc-say">This device has not seen the signing key yet, so it has nothing to hold the forgery up against. Run the day on the Watch tab first.</p>`; return; }
+  const res = await fetch("/api/carbon/forge" + (CC.session ? "?sid=" + encodeURIComponent(CC.session) + "&mode=" + encodeURIComponent(CC.mode || "enforce") : ""), { method: "POST" });
+  if (!res.ok) { $("#ccResult").textContent = "There is nothing to copy yet."; return; }
+  const f = await res.json();
+  let got = null;
+  try { got = await checkOnDevice(f.book); } catch { got = null; }
+  if (!got) { $("#ccResult").textContent = "The check did not run. Try again."; return; }
+  const story = f.field === "action"
+    ? "We rewrote the whole book so it says Maya approved the payment, and re-sealed every page with a new key. Your device still holds the key it trusted and the stamps it saw, so the forgery is caught."
+    : `${f.say || "We rewrote the book."} We re-sealed every page with a new key. Your device still holds the key it trusted and the stamps it saw, so the forgery is caught.`;
+  $("#ccResult").innerHTML = `<p class="cc-say">${esc(story)} The real book was not touched.</p>` + ccStamp(got.out)
+    + `<p class="cc-say">${got.out.intact ? "This device did not catch it, because it holds no stamp that reaches the book. That is the limit described in the README." : esc(got.out.why || "")}</p>` + ccWhere(got.where);
 });
 $("#ccDownload").addEventListener("click", () => {
   if (!CC) return;
@@ -462,7 +575,15 @@ $("#ccDownload").addEventListener("click", () => {
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 });
-/* ---------- rules ---------- */
+/* the footer: the key every book is signed with */
+(async function footerKey() {
+  const el = $("#footKey");
+  try {
+    const k = await (await fetch("/api/carbon/key")).json();
+    el.innerHTML = k.temporary ? `<a href="/api/carbon/key" target="_blank" rel="noopener">temporary (changes on restart)</a>` : `<a href="/api/carbon/key" target="_blank" rel="noopener">${esc(k.short)}</a>`;
+    el.title = k.public_key;
+  } catch { el.textContent = "not available"; }
+})();/* ---------- rules ---------- */
 let DRAFT = null;
 async function loadPolicy() {
   if (DRAFT) return;

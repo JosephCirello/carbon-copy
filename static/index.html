@@ -148,10 +148,12 @@
         <div class="cc-tools">
           <button class="go" id="ccCheck">Check the book</button>
           <button class="go" id="ccTamper">Try to change one</button>
+          <button class="go" id="ccForge">Try to forge a new book</button>
           <button class="go" id="ccDownload">Download the carbon copies</button>
           <label class="chk"><input type="checkbox" id="ccDev"> Developer view</label>
         </div>
-        <div class="cc-result" id="ccResult" aria-live="polite"></div>
+        <p class="cc-device" id="ccDevice"></p>
+          <div class="cc-result" id="ccResult" aria-live="polite"></div>
       </div>
       <div class="cc-book" id="ccBook"></div>
     </div>
@@ -163,7 +165,10 @@
   </section>
 </main>
 
+<footer class="foot" id="foot">Signing key: <span id="footKey">checking…</span></footer>
+
+<script src="/static/carbon_verify.js?v=2026-11-25a"></script>
 <script src="https://cdn.jsdelivr.net/npm/ag-grid-community@32.3.3/dist/ag-grid-community.min.js"></script>
-<script src="/static/app.js?v=2026-11-24a"></script>
+<script src="/static/app.js?v=2026-11-25a"></script>
 </body>
 </html>

@@ -26,6 +26,7 @@ import time
 import uuid
 from collections import OrderedDict
 from pathlib import Path
+from typing import Any
 
 from contextlib import asynccontextmanager
 
@@ -35,7 +36,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from receipts.agent import run_episode
-from receipts.carbon import CarbonCopy, Signer, tamper_demo, verify as carbon_verify
+from receipts.carbon import CarbonCopy, Signer, forge_demo, safe_json, tamper_demo, verify as carbon_verify
 from receipts.compiler import FIELDS, ai_compile
 from receipts.core import Receipts
 from receipts.paypal import make_paypal
@@ -103,6 +104,10 @@ class Visitor:
         self.live_ledger: list[dict] = []
         self.seen = time.time()
 
+
+#: The one signing key of this process: every book it writes is signed with it, so the page can print it and a
+#: device can pin it. From CARBON_COPY_KEY when set (any text), else made in memory and flagged temporary.
+SIGNER = Signer.from_env()
 
 VISITORS: "OrderedDict[str, Visitor]" = OrderedDict()      # least recently seen first
 _VISITORS_LOCK = threading.RLock()
@@ -239,19 +244,41 @@ def set_policy(body: PolicyIn, request: Request):
     return rules
 
 
-def _sse(q: queue.Queue):
+def _data(ev) -> str:
+    """One event as JSON a browser can read. NaN and Infinity are not JSON, so an event holding one is written
+    again in its safe form (see ``safe_json``) instead of breaking the stream."""
+    try:
+        return json.dumps(ev, default=str, allow_nan=False)
+    except ValueError:
+        return json.dumps(safe_json(ev))
+
+
+def _sse(q: queue.Queue, carbon_of=None):
+    """The events of one run as a server-sent stream. With ``carbon_of`` (a function giving the run's book, or
+    None) every event also carries ``head``: a stamp of the book at that moment, signed, for the owner's device
+    to keep."""
     while True:
         ev = q.get()
         if ev is None:
             break
-        yield f"data: {json.dumps(ev, default=str)}\n\n"
+        book = carbon_of() if carbon_of else None
+        if book is not None and isinstance(ev, dict):
+            ev = {**ev, "head": book.stamp()}
+        yield f"data: {_data(ev)}\n\n"
+
+
+def _carbon_of(visitor: Visitor, sid: str):
+    def get():
+        s = visitor.sessions.get(sid)
+        return s["carbon"] if s else None
+    return get
 
 
 def _register(r: Receipts, q: queue.Queue, sid: str, visitor: Visitor, source: str = "live run"):
     """Keep the run with its own carbon-copy book (a live run gets it here, before its first event; a replay
     built its Receipts with one already) and the stamps the owner's phone is handed."""
     if r.carbon is None:
-        r.carbon = CarbonCopy(Signer.from_env())
+        r.carbon = CarbonCopy(SIGNER)
     with _VISITORS_LOCK:
         visitor.sessions[sid] = {"sid": sid, "r": r, "t": time.time(), "carbon": r.carbon, "stamps": [], "source": source}
         while len(visitor.sessions) > MAX_SESSIONS_PER_VISITOR:
@@ -294,7 +321,7 @@ def run(request: Request, scenario: str, model: str, mode: str = "enforce"):
         q.put(None)
 
     threading.Thread(target=work, daemon=True).start()
-    return StreamingResponse(_sse(q), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    return StreamingResponse(_sse(q, _carbon_of(visitor, sid)), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 def _episodes() -> list[dict]:
@@ -373,7 +400,7 @@ def replay(request: Request, line: int, speed: float = 1.0, mode: str | None = N
     def work():
         try:
             pp = make_paypal(scn.get("paypal", {}), scn["id"])
-            r = Receipts(scn, pp, mode=use_mode, policy=policy, on_event=q.put, carbon=CarbonCopy(Signer.from_env()))
+            r = Receipts(scn, pp, mode=use_mode, policy=policy, on_event=q.put, carbon=CarbonCopy(SIGNER))
             _register(r, q, sid, visitor, source="recorded run, replayed")
             q.put({"type": "replay", "model": rec["model"], "recorded_at": rec.get("ts"), "recorded_mode": rec["mode"], "mode": use_mode})
             # Recorded against the stand-in; in the sandbox the same orders carry real PayPal ids.
@@ -416,7 +443,7 @@ def replay(request: Request, line: int, speed: float = 1.0, mode: str | None = N
         q.put(None)
 
     threading.Thread(target=work, daemon=True).start()
-    return StreamingResponse(_sse(q), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    return StreamingResponse(_sse(q, _carbon_of(visitor, sid)), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 class HoldIn(BaseModel):
@@ -459,6 +486,13 @@ def reset(request: Request):
     return {"reset": True}
 
 
+def _with_key(r: Receipts, out):
+    """The stamp the tap returns, plus the public key that signed it, so the owner's device can pin the key."""
+    if isinstance(out, dict) and isinstance(out.get("stamp"), dict) and r.carbon is not None:
+        out["stamp"] = {**out["stamp"], "public_key": r.carbon.stamp()["public_key"]}
+    return out
+
+
 def _keep_stamp(request: Request, sid: str, out) -> None:
     """The phone keeps the stamp handed over with the tap, in this run's session."""
     v = _visitor(request)
@@ -475,7 +509,7 @@ def approve(body: HoldIn, request: Request):
     r = _sessions(request).get(body.session)
     if not r:
         raise HTTPException(404, "session expired")
-    out = r.approve(body.hold_id)
+    out = _with_key(r, r.approve(body.hold_id))
     _keep_stamp(request, body.session, out)
     return out
 
@@ -485,7 +519,7 @@ def decline(body: HoldIn, request: Request):
     r = _sessions(request).get(body.session)
     if not r:
         raise HTTPException(404, "session expired")
-    out = r.decline(body.hold_id)
+    out = _with_key(r, r.decline(body.hold_id))
     _keep_stamp(request, body.session, out)
     return out
 
@@ -532,15 +566,24 @@ def carbon_book(request: Request, sid: str | None = None, mode: str | None = Non
     return {**s["carbon"].book(), "stamps": stamps, "source": s["source"], "session": s["sid"],
             "mode": s["r"].mode, "has_twin": twin}
 
+@app.get("/api/carbon/key")
+def carbon_key():
+    """The public key every book of this server is signed with, for the page footer and for anyone checking."""
+    return {"public_key": SIGNER.public_key_hex, "short": SIGNER.short_key, "temporary": SIGNER.temporary}
+
+
 class VerifyIn(BaseModel):
     book: dict
-    stamps: list = []
+    stamps: Any = None           # whatever the device holds; the check fails closed on anything that is not a list of stamps
+    expected_key: str | None = None
 
 
 @app.post("/api/carbon/verify")
 def carbon_verify_book(body: VerifyIn):
+    """The fallback check, for a browser with no Ed25519. The device sends its own stamps and the key it trusts;
+    nothing here is read from the server's own session."""
     try:
-        return carbon_verify(body.book, body.stamps)
+        return carbon_verify(body.book, body.stamps, expected_key=body.expected_key)
     except Exception:  # noqa: BLE001  a file that is not a book fails closed
         return {"intact": False, "count": 0, "first_bad": 1, "why": "this is not a carbon-copy book we can read"}
 
@@ -553,6 +596,20 @@ def carbon_tamper(request: Request, sid: str | None = None, mode: str | None = N
     if s is None:
         raise HTTPException(404, "no run to copy yet")
     return tamper_demo(s["carbon"].book())
+
+
+@app.post("/api/carbon/forge")
+def carbon_forge(request: Request, sid: str | None = None, mode: str | None = None):
+    """The real attack, for the demo: a copy of the book with the owner's decline flipped to approved and every
+    receipt re-signed with a brand-new key. The browser checks it against the key it trusts. The real book is never touched."""
+    _check_mode(mode)
+    s = _carbon_session(request, sid, mode)
+    if s is None:
+        raise HTTPException(404, "no run to copy yet")
+    out = forge_demo(s["carbon"].book())
+    if out["book"] is None:
+        raise HTTPException(404, "no receipts to copy yet")
+    return {"book": out["book"], "n": out["n"], "field": out["field"], "say": out["say"]}
 
 
 def _ledger_from(rec: dict, live: bool = False, book: CarbonCopy | None = None):

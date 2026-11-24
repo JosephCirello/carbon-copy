@@ -19,7 +19,7 @@ One new module, `receipts/carbon.py`, holds the book and the check. `Receipts.em
 ```
 
 - `fp = sha256(canonical({"n","at","kind","event","prev"}))`
-- `canonical(x) = json.dumps(x, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str).encode("utf-8")`
+- `canonical(x) = json.dumps(x, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str).encode("utf-8")` (task 9 replaced `default=str` with the cleaning step below; see "The check does not trust the server")
 - `canonical()` first normalises the value: every float with no fractional part becomes an int, recursively through dicts and lists; tuples become lists; anything else JSON cannot hold goes through `str` as before. A browser writes 1836.0 as 1836, so without this the same number would give different bytes after a trip through `JSON.parse` and `JSON.stringify`.
 - `append()` stores the NORMALISED event, so what is hashed is exactly what is stored and handed out. `verify()` normalises before hashing too, so books signed before this change still check out when they hold no whole-number floats.
 - `at` is rounded to milliseconds before hashing, so the stored value and the hashed value are the same number.
@@ -51,7 +51,7 @@ The signed head closes the end of the book, but it does not close the past: some
 ### `verify(book, stamps=None) -> dict`
 Walks the receipts in order. For each: is `n` the next number; does `prev` equal the previous `fp`; does the recomputed fingerprint equal `fp`; does the signature verify against the public key. Stops at the first failure. Then it checks the `head`: its signature verifies, its `count` equals the number of receipts, and its `last_fp` equals the last receipt's fingerprint (64 zeros when empty). A book with no `head` is *changed* with the reason "the book has no signed count"; a `head` whose signature does not verify is *changed* with the reason "the book's signed count was changed"; a `head` whose `count` or `last_fp` does not match the receipts is *changed* with the reason "receipts are missing from the end of the book".
 
-Only when the book is intact on its own does it look at `stamps` — a list of the owner's phone stamps, each a signed head (`{"count", "last_fp", "sig"}`) handed to the phone when the owner tapped. A signed count inside the book can be cut back to an older signed count that still matches the receipts left; the phone holds a copy of the count the book reached, outside the book. If any stamp's `count` is greater than the number of receipts, or its `last_fp` is not the fingerprint of the receipt at that position, the book is *changed* with the reason "the book is shorter than a stamp the owner's phone already holds". The stamps are read only for their `count` and `last_fp`; their signatures are not re-checked here (a stamp is an assertion the phone holds, and a false one fails closed — it says *changed*).
+Only when the book is intact on its own does it look at `stamps` — a list of the owner's phone stamps, each a signed head (`{"count", "last_fp", "sig"}`) handed to the phone when the owner tapped. A signed count inside the book can be cut back to an older signed count that still matches the receipts left; the phone holds a copy of the count the book reached, outside the book. If any stamp's `count` is greater than the number of receipts, or its `last_fp` is not the fingerprint of the receipt at that position, the book is *changed* with the reason "the book is shorter than a stamp the owner's phone already holds". The stamps are read only for their `count` and `last_fp`; their signatures are not re-checked here (task 9 reverses this: every stamp's signature is now checked, see below).
 Returns `{"intact": true, "count": N}` or `{"intact": false, "count": N, "first_bad": n, "why": "<plain words>"}`.
 
 ### `tamper_demo(book, n=None) -> dict`
@@ -114,3 +114,62 @@ Found on the live demo: "Run the day" starts two replays for one visitor, one wi
 - **Server.** `GET /api/carbon` and `POST /api/carbon/tamper` take an optional `mode` ("enforce" or "observe"; anything else is a 400) next to the optional `sid`. Choice order: `sid` if given; else the visitor's latest run of `mode` if given; else the visitor's latest ENFORCE run; else, only when there is no enforce run, the latest run of any mode. The choice reads each run's mode and never the order the replays finished in. The book response adds `mode` (the shown run's mode) and `has_twin` (true when the visitor also has a run of the other mode for the same day).
 - **Screen.** When `has_twin` is true a small switch sits above the receipts: "Showing:" then two buttons, "Carbon Copy on (the run Maya saw)" and "Carbon Copy off (nothing checked it)". With no twin the switch is hidden. The source line names the shown run ("the run with Carbon Copy on" or "off"). Every call from the tab (`/api/carbon`, `/api/carbon/tamper`) passes the mode that is shown. Check and download use the book on screen.
 - **Tests.** Both replays started in either order give the enforce book from `GET /api/carbon`; after a decline `tamper` on the default book says Maya approved what she declined; `mode=observe` returns the observe book; a bad mode is a 400.
+
+## The check does not trust the server (task 9)
+
+Two attack reviews broke the headline claim. A book re-signed under a new key read intact (the check used whatever key the book carried); the "phone stamps" lived in the server's session, so the server chose what the check compared against; "Check the book" asked the server; agent-written content (a lone surrogate, NaN, huge integers) either broke the write or changed on a browser round trip; a malformed stamp was skipped; a changed receipt inside the stamped part got the wrong reason; the command line exited 1 for an unreadable file; and the fingerprint recipe could not be reproduced outside this Python code. The fixes, in order of the findings (F1 to F9):
+
+### D1. One canonical form that any JSON tool reproduces
+
+ONE CANONICAL FORM THAT ANY JSON TOOL REPRODUCES. At append time the event is cleaned into a "safe JSON" form and that cleaned form is what is stored, hashed and handed out: dict keys and strings with lone surrogates replaced by U+FFFD; integers kept only when abs(n) <= 2**53 - 1, otherwise written as their decimal string; floats that are whole and within that range become ints; every other float (including NaN, Infinity, 298.5) becomes the string Python's repr gives; tuples become lists; any other type (Decimal, datetime, set, bytes, objects) becomes str(value) explicitly at clean time, so nothing reaches json.dumps that it would not handle; keys are sorted by Unicode code point. canonical() = json.dumps(cleaned, sort_keys=True, separators=(",", ":"), ensure_ascii=False). With only strings, safe integers, booleans, null, lists and dicts, the browser's JSON.stringify with code-point-sorted keys gives the same bytes.
+
+Notes on how this is built (F4, F8, F9):
+- `safe_json(x)` in `receipts/carbon.py` is the cleaning step. `CarbonCopy.append()` runs the event through it, so what is stored is what is hashed. It cannot raise on any value an agent writes (nesting deeper than 100 levels is written as text). Two keys that clean to the same text keep the one with the larger cleaned value, so dict order never changes the bytes. The cleaned dict keeps the order the keys were written in; `canonical()` writes them sorted by code point.
+- `canonical()` has no `default=` and refuses NaN (`allow_nan=False`): a value `safe_json` has not cleaned fails loudly instead of being hashed one way and sent another. It still turns whole floats into ints and tuples into lists, so values already in this shape hash the same as before.
+- The one float left in a receipt is `at`, a finite time rounded to milliseconds. Python's `repr` and the browser's number text agree on such a number (no exponent form), so it needs no special rule.
+- A receipt whose event holds a non-integer float or a huge number was not written by `append()`; its fingerprint is computed as given and a book that does not match what `append()` stored reads *changed*.
+- The text escapes are the same in both languages: `"` and `\` and the control characters below U+0020 (`\b \f \n \r \t`, else `\u00xx` lower case); everything else, including U+007F, U+2028 and astral characters, stays as UTF-8.
+
+### D2. A fixed, published key (F1)
+
+`Signer.from_env()` accepts any `CARBON_COPY_KEY` string: 64 hex characters are the Ed25519 seed as before; any other text gives the seed `SHA-256(UTF-8 text)`, so a generated random value (Render's) works. With no key set it generates one in memory. `app.py` makes ONE signer for the process and every run's book uses it, so the footer's key is the key of every book. `GET /api/carbon/key` returns `{"public_key", "short", "temporary"}` where `short` is the first 16 hex characters. The footer prints "Signing key: <short>" linked to the full key, or "Signing key: temporary (changes on restart)".
+
+### D3. The owner's device pins the key and keeps the stamps (F2)
+
+A stamp is `{"count", "last_fp", "sig", "public_key"}`: the signed head plus the key that signed it. `CarbonCopy.stamp()` makes one. The server hands out stamps in two ways: `approve()` and `decline()` return one under `"stamp"` as before (the `/api/approve` and `/api/decline` routes add the `public_key`), and the server-sent event stream adds `"head"` (a stamp of the book at that moment) to every event it sends, so the device holds a stamp for every moment it saw. `static/app.js` keeps them in `localStorage`:
+
+- `cc.pinned_key`: the full public key of the first stamp the device received (trust on first use). A button on the Carbon copy tab forgets it.
+- `cc.stamps.<run id>`: every stamp received for that run, whole, without repeats.
+
+Every `localStorage` access is in `try/catch`; with storage unavailable the device keeps them in memory and the screen says "This device cannot save stamps, so it keeps them only until you close this page."
+
+### D4. The check runs in the browser (F2, F3, F5, F6)
+
+`static/carbon_verify.js` has `verify(book, stamps, pinnedKey)` (async): the same canonical form, SHA-256 from `crypto.subtle.digest`, Ed25519 from `crypto.subtle.verify`; it returns the same answers with the same plain reasons as the Python check. It is loaded by the page and also exports its functions with `module.exports` so `node` can run it. `supportsEd25519()` tells the page whether the browser can verify Ed25519. "Check the book" runs it against the book on screen, the device's stamps for that run and the device's pinned key, and shows "Checked in your browser" under the stamp. With no Ed25519 in WebCrypto the screen says so and posts the book, the device's stamps and the pinned key to `POST /api/carbon/verify`, labelled "Checked by the server". With no pinned key yet the screen says the device has not seen the key and the check can only compare the book with itself.
+
+Python `verify(book, stamps=None, expected_key=None)`, in this order:
+1. IF `expected_key` is given and the book's `public_key` differs: *changed*, "it was signed with a different key than the one your device trusts".
+2. The receipts and the signed head, as before, against that one key.
+3. Every stamp is checked before any is compared: it must be an object whose `count` is a whole number (not a float, not text, not a boolean) of at least 0, whose `last_fp` and `sig` are text, and whose signature over `fingerprint({"count", "last_fp"})` verifies against the expected key (the book's key when none is given). Otherwise: *changed*, "a stamp on your device is damaged or forged". `stamps` that is neither empty nor a list is the same.
+4. Then each stamp is compared with the book: `count` beyond the receipts gives "the book is shorter than a stamp your device already holds"; a position that exists with a different `last_fp` gives "receipt #N no longer matches the stamp your device kept" (`first_bad` is N in both).
+A receipt that is not an object, or whose fields cannot be hashed, is *changed* at that receipt ("its content was changed"). `_signature_ok` reads base64 strictly. The different-key and damaged-stamp results name no receipt (no `first_bad`): the whole book or the device is at fault, and the screen's stamp then reads "CHANGED".
+
+### D5. A parity test (F9)
+
+`tests/test_carbon_parity.py`: when `node` is on the path, the test writes a book of tricky content (unicode, astral keys, 298.5, 2**60, 9007199254740993, NaN, a lone surrogate, nested lists) through `Receipts` with the book attached and checks that `static/carbon_verify.js` under node says intact on the untouched book, names the right receipt on a changed copy, rejects a key other than the pinned one and rejects a damaged stamp. It skips with a message when node is absent.
+
+### D6. The command line (F7)
+
+`python -m receipts.carbon verify <book.json> [--stamps <stamps.json>] [--key <hex>]`: exit 0 intact, 1 changed, 2 the file could not be read (missing, not UTF-8, not JSON, or not a book), with one plain line on standard error. `--key` is the public key to trust (64 hex characters; anything else is exit 2).
+
+### D7. The demo shows the real attack
+
+`POST /api/carbon/forge?sid=&mode=` (same choice of run as `tamper`) calls `forge_demo(book)`: a copy of the book with the change `tamper_demo` makes (Maya's decline flipped to approved), then every receipt rebuilt with its links and fingerprints and signed with a brand-new key, with a new signed head and the new public key. The response is `{"book", "n", "field", "say"}`. *Try to forge a new book* hands that book to the browser's own check with the device's stamps and pinned key, and the check rejects it with the different-key reason. The screen says: "We rewrote the whole book so it says Maya approved the payment, and re-sealed every page with a new key. Your device still holds the key it trusted and the stamps it saw, so the forgery is caught." With no pinned key yet, the button says the device has not seen the key and asks the visitor to run the day first.
+
+### D8. The README says what it cannot do
+
+"Limits we know about" says: the device must have seen the key first (trust on first use); anything after the last stamp the device saw can still be rewritten by whoever holds the key; the check proves the book was not changed, not that what was written was true.
+
+### Server-sent events and NaN
+
+`_sse` writes events with `allow_nan=False` and, when an event holds NaN or Infinity, writes it again with those values as text, so one such value cannot break the stream the browser reads.

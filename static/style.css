@@ -408,3 +408,12 @@ html, body { max-width: 100%; }
 .cc-switch[hidden] { display: none; }
 .cc-switch button { background: transparent; color: #8aa8dc; border: 1px solid #34364a; border-radius: 6px; padding: 6px 10px; font: inherit; font-size: 13px; cursor: pointer; }
 .cc-switch button[aria-pressed="true"] { background: #8aa8dc; color: #14131a; border-color: #8aa8dc; }
+
+/* task 9: the key footer, the device's own notes, the "where it was checked" line */
+.foot { max-width: 860px; margin: 18px auto 26px; padding: 0 26px; font: 12px/1.5 var(--mono); color: var(--muted); overflow-wrap: anywhere; }
+.foot a { color: inherit; }
+.cc-device { margin: 12px 0 0; font-family: "Special Elite", "Courier New", monospace; font-size: 13px; color: #55709f; overflow-wrap: anywhere; }
+.cc-device:empty { display: none; }
+.cc-where { margin: 0; font-family: "Special Elite", "Courier New", monospace; font-size: 13px; color: #3fbf7a; }
+.cc-where.warn { color: #e0b252; }
+.cc-link { background: none; border: 0; padding: 0; color: #55709f; font: inherit; font-size: 12px; text-decoration: underline; cursor: pointer; }

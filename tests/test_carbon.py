@@ -551,7 +551,7 @@ def test_a_stamp_reaching_past_a_truncated_book_is_caught():
     stamp5 = _head_at(signer, 5, recs[4]["fp"])
     out = verify(truncated, stamps=[stamp5])
     assert out["intact"] is False
-    assert out["why"] == "the book is shorter than a stamp the owner's phone already holds"
+    assert out["why"] == "the book is shorter than a stamp your device already holds"
     assert out["first_bad"] == 5
 
 
@@ -566,7 +566,7 @@ def test_a_stamp_whose_last_fp_is_not_the_receipt_at_that_position_is_caught():
     bad_stamp = _head_at(signer, 3, recs[4]["fp"])
     out = verify(book, stamps=[bad_stamp])
     assert out["intact"] is False
-    assert out["why"] == "the book is shorter than a stamp the owner's phone already holds"
+    assert out["why"] == "receipt #3 no longer matches the stamp your device kept"   # the book is NOT shorter (task 9, F6)
     assert out["first_bad"] == 3
 
 
@@ -582,7 +582,7 @@ def test_any_one_of_several_stamps_is_enough_to_flag_a_short_book():
     stamp4 = _head_at(signer, 4, recs[3]["fp"])    # reaches past the truncated book
     out = verify(truncated, stamps=[stamp2, stamp4])
     assert out["intact"] is False
-    assert out["why"] == "the book is shorter than a stamp the owner's phone already holds"
+    assert out["why"] == "the book is shorter than a stamp your device already holds"
 
 
 def test_a_stamp_at_the_books_own_count_is_accepted():
@@ -597,8 +597,9 @@ def test_a_stamp_at_the_books_own_count_is_accepted():
 
 
 def test_an_empty_book_with_a_stamp_at_zero_is_intact():
-    book = _book()
-    stamp = {"count": 0, "last_fp": GENESIS, "sig": ""}
+    signer = _signer()
+    book = CarbonCopy(signer).book()
+    stamp = _head_at(signer, 0, GENESIS)             # a stamp is signed (task 9): an unsigned one is forged
     assert verify(book, stamps=[stamp]) == {"intact": True, "count": 0}
 
 
@@ -716,7 +717,7 @@ def test_cli_applies_the_stamps_and_flags_a_short_book(tmp_path):
     assert _run_cli(bp).returncode == 0                          # without stamps the truncated book looks intact
     proc = _run_cli(bp, sp)                                       # with stamps the phone catches the rollback
     assert proc.returncode == 1
-    assert "the book is shorter than a stamp the owner's phone already holds" in proc.stdout
+    assert "the book is shorter than a stamp your device already holds" in proc.stdout
 
 
 # ---- whole-number floats survive a browser round trip ----------------------------------------
@@ -807,3 +808,364 @@ def test_visitors_read_carbon_copy_not_receipts():
     assert "<title>Carbon Copy</title>" in html and '<div class="name">Carbon Copy</div>' in html
     assert "<svg" not in html.split("</header>")[0]
     assert "PAYPAL_MODE\n        value: standin" in (root / "render.yaml").read_text(encoding="utf-8").replace("\r\n", "\n")
+
+
+# ---- 9 the check does not trust the server (task 9) ------------------------------------------------------------
+import copy  # noqa: E402
+import datetime  # noqa: E402
+import decimal  # noqa: E402
+import hashlib  # noqa: E402
+import math  # noqa: E402
+
+import pytest  # noqa: E402
+
+from receipts.carbon import forge_demo, safe_json  # noqa: E402
+
+WHY_KEY = "it was signed with a different key than the one your device trusts"
+WHY_BAD_STAMP = "a stamp on your device is damaged or forged"
+
+
+def _stamp_book(count=5):
+    signer = _signer()
+    carbon = CarbonCopy(signer)
+    for i in range(count):
+        carbon.append("verdict", {"t": 1795462000.001 + i, "amount": 100 + i})
+    return signer, carbon
+
+
+# F4 / D1: the safe JSON form --------------------------------------------------------------------------------
+
+def test_safe_json_replaces_lone_surrogates_in_text_and_keys():
+    assert safe_json("a\ud83db") == "a\ufffdb"
+    assert safe_json({"k\udfff": ["\ud800"]}) == {"k\ufffd": ["\ufffd"]}
+    assert safe_json("😀") == "😀"                                  # a real astral character is kept
+
+
+def test_safe_json_keeps_safe_integers_and_writes_the_rest_as_text():
+    assert safe_json(2 ** 53 - 1) == 2 ** 53 - 1 and safe_json(-(2 ** 53 - 1)) == -(2 ** 53 - 1)
+    assert safe_json(2 ** 53) == str(2 ** 53)
+    assert safe_json(9007199254740993) == "9007199254740993"
+    assert safe_json(True) is True and safe_json(None) is None
+
+
+def test_safe_json_floats():
+    assert safe_json(1836.0) == 1836 and isinstance(safe_json(1836.0), int)
+    assert safe_json(float(2 ** 60)) == repr(float(2 ** 60))        # whole but out of range: text
+    assert safe_json(298.5) == "298.5"
+    assert safe_json(float("nan")) == "nan" and safe_json(float("inf")) == "inf" and safe_json(float("-inf")) == "-inf"
+    assert safe_json(-0.0) == 0
+
+
+def test_safe_json_turns_every_other_type_into_text_and_tuples_into_lists():
+    assert safe_json((1, (2, 3))) == [1, [2, 3]]
+    assert safe_json(decimal.Decimal("1.10")) == "1.10"
+    assert safe_json(datetime.date(2026, 1, 2)) == "2026-01-02"
+    assert safe_json(b"ab") == "b'ab'" and safe_json({"x"}) == "{'x'}"
+    assert safe_json({1: "a", None: "b"}) == {"1": "a", "None": "b"}
+
+
+def test_safe_json_does_not_change_its_input_and_survives_a_cycle():
+    original = {"a": [1.5, {"b": (1,)}]}
+    snapshot = copy.deepcopy(original)
+    safe_json(original)
+    assert original == snapshot
+    loop: list = []
+    loop.append(loop)
+    json.dumps(safe_json({"loop": loop}))                           # finishes, and the result is plain JSON
+
+
+def test_keys_that_clean_to_the_same_text_give_the_same_bytes_in_either_order():
+    a = safe_json({"k\ud800": 1, "k\udfff": 2})
+    b = safe_json({"k\udfff": 2, "k\ud800": 1})
+    assert a == b == {"k\ufffd": 2}
+
+
+def test_the_example_from_the_review_lone_surrogate_in_a_reply_is_written_and_checked():
+    carbon = CarbonCopy(_signer())
+    receipt = carbon.append("desk", {"t": 1795462000.001, "tool": "reply_to_customer",
+                                     "args": {"to": "a@b.c", "body": "hello \ud83d"}})
+    assert receipt["event"]["args"]["body"] == "hello \ufffd"
+    assert verify(carbon.book()) == {"intact": True, "count": 1}
+    json.dumps(carbon.book(), ensure_ascii=False).encode("utf-8")   # can be sent as UTF-8
+
+
+def test_nan_and_infinity_are_written_and_the_book_is_valid_json():
+    carbon = CarbonCopy(_signer())
+    carbon.append("verdict", {"t": 1795462000.001, "amount": float("nan"), "x": [float("inf"), float("-inf")]})
+    book = carbon.book()
+    text = json.dumps(book, allow_nan=False)                        # Starlette refuses NaN: there is none
+    assert verify(json.loads(text)) == {"intact": True, "count": 1}
+
+
+def test_a_time_that_is_not_a_finite_number_falls_back_to_now():
+    carbon = CarbonCopy(_signer())
+    for bad in (float("nan"), float("inf"), "later", None, True):
+        r = carbon.append("verdict", {"t": bad, "amount": 1})
+        assert math.isfinite(r["at"]) and r["at"] > 1_000_000_000
+
+
+@pytest.mark.parametrize("number", [9007199254740993, 2 ** 60, float(2 ** 60), 2 ** 53, -(2 ** 63), 298.5, 1e-7, 1e22])
+def test_big_numbers_survive_a_browser_round_trip(number):
+    carbon = CarbonCopy(_signer())
+    carbon.append("verdict", {"t": 1795462000.001, "amount": number})
+    roundtrip = json.loads(json.dumps(carbon.book(), allow_nan=False))
+    assert verify(roundtrip) == {"intact": True, "count": 1}
+
+
+def test_canonical_orders_keys_by_code_point_not_by_utf16_unit():
+    # U+FFFF sorts before U+10000 by code point; by UTF-16 unit (a browser's default) the astral key would come first
+    assert canonical({"\U00010000": 1, "\uffff": 2}) == '{"\uffff":2,"\U00010000":1}'.encode("utf-8")
+
+
+def test_canonical_refuses_what_it_would_have_to_guess_at():
+    for odd in (decimal.Decimal("1"), datetime.date(2026, 1, 1), {1, 2}, b"x"):
+        with pytest.raises(TypeError):
+            canonical({"v": odd})
+    for bad in (float("nan"), float("inf")):
+        with pytest.raises(ValueError):
+            canonical({"v": bad})
+
+
+def test_every_type_an_agent_could_write_is_stored_as_what_is_hashed_and_sent():
+    carbon = CarbonCopy(_signer())
+    r = carbon.append("verdict", {"t": 1795462000.001, "d": decimal.Decimal("2.50"), "when": datetime.datetime(2026, 1, 2, 3, 4),
+                                  "s": {"a"}, "b": b"\x00", "o": object, "t2": (1, 2)})
+    assert all(isinstance(v, (str, list)) for v in r["event"].values())
+    assert verify(json.loads(json.dumps(carbon.book()))) == {"intact": True, "count": 1}
+
+
+def test_the_fingerprint_recipe_is_the_plain_one_anyone_can_redo():
+    # The recipe from the README, written out with nothing but json and hashlib.
+    carbon = CarbonCopy(_signer())
+    r = carbon.append("say", {"t": 1795462000.001, "text": "café 😀", "n": 7, "ok": True, "none": None, "list": [1, ["x"]],
+                              "\U00010000": "astral", "\uffff": "bmp"})
+    payload = {"n": r["n"], "at": r["at"], "kind": r["kind"], "event": r["event"], "prev": r["prev"]}
+    text = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    assert hashlib.sha256(text.encode("utf-8")).hexdigest() == r["fp"]
+
+
+# D2: the key ------------------------------------------------------------------------------------------------
+
+def test_a_key_that_is_64_hex_characters_is_the_seed(monkeypatch):
+    seed = Ed25519PrivateKey.generate().private_bytes(
+        serialization.Encoding.Raw, serialization.PrivateFormat.Raw, serialization.NoEncryption())
+    monkeypatch.setenv("CARBON_COPY_KEY", seed.hex().upper())
+    assert Signer.from_env().public_key_hex == Signer(Ed25519PrivateKey.from_private_bytes(seed)).public_key_hex
+
+
+@pytest.mark.parametrize("text", ["correct horse battery staple", "ünïcode ☕", "abc123", "0" * 63, "g" * 64, " " + "a" * 64])
+def test_any_other_key_text_gives_the_seed_sha256_of_it(monkeypatch, text):
+    monkeypatch.setenv("CARBON_COPY_KEY", text)
+    seed = hashlib.sha256(text.encode("utf-8")).digest()
+    assert Signer.from_env().public_key_hex == Signer(Ed25519PrivateKey.from_private_bytes(seed)).public_key_hex
+    assert Signer.from_env().public_key_hex == Signer.from_env().public_key_hex      # fixed
+    assert Signer.from_env().temporary is False
+
+
+def test_with_no_key_set_the_key_is_temporary_and_the_short_form_is_16_hex(monkeypatch):
+    monkeypatch.delenv("CARBON_COPY_KEY", raising=False)
+    s = Signer.from_env()
+    assert s.temporary is True and s.short_key == s.public_key_hex[:16] and len(s.short_key) == 16
+
+
+def test_the_key_text_never_appears_in_the_signer_repr(monkeypatch):
+    monkeypatch.setenv("CARBON_COPY_KEY", "a-very-secret-sentence")
+    s = Signer.from_env()
+    assert "secret" not in repr(s) and "secret" not in str(s.public_key_hex)
+
+
+# F1 / D4: the key the device trusts ---------------------------------------------------------------------------
+
+def test_a_book_re_signed_under_a_new_key_reads_intact_alone_but_changed_against_the_trusted_key():
+    carbon = _book_with_owner_action("declined")
+    book = carbon.book()
+    forged = forge_demo(book)["book"]
+    assert forged["receipts"][1]["event"]["action"] == "approved"
+    assert verify(forged) == {"intact": True, "count": 2}               # alone, the forgery is perfect
+    out = verify(forged, expected_key=book["public_key"])               # against the key the device trusts it is not
+    assert out["intact"] is False and out["why"] == WHY_KEY
+    assert verify(book, expected_key=book["public_key"]) == {"intact": True, "count": 2}
+    assert verify(book, expected_key=book["public_key"].upper()) == {"intact": True, "count": 2}
+
+
+def test_the_forgery_does_not_touch_the_real_book():
+    carbon = _book_with_owner_action("declined")
+    before = carbon.book()
+    out = forge_demo(before)
+    assert carbon.book() == before and out["n"] == 2 and "APPROVED" in out["say"] and "declined" in out["say"]
+    assert out["book"]["public_key"] != before["public_key"]
+    assert forge_demo(CarbonCopy(_signer()).book())["book"] is None
+
+
+# F2 / F5: the stamps are checked, malformed ones fail closed ----------------------------------------------
+
+def test_a_stamp_with_a_made_up_signature_is_forged():
+    signer, carbon = _stamp_book()
+    book = carbon.book()
+    stamp = {**book["head"], "sig": "AAAA"}
+    out = verify(book, stamps=[stamp])
+    assert out["intact"] is False and out["why"] == WHY_BAD_STAMP
+
+
+def test_a_stamp_signed_by_another_key_is_forged_even_if_the_book_key_is_not_pinned():
+    signer, carbon = _stamp_book()
+    other = _signer()
+    stamp = _head_at(other, 5, carbon.receipts()[4]["fp"])
+    assert verify(carbon.book(), stamps=[stamp])["why"] == WHY_BAD_STAMP
+    assert verify(carbon.book(), stamps=[stamp], expected_key=signer.public_key_hex)["why"] == WHY_BAD_STAMP
+
+
+def test_a_stamp_is_checked_against_the_trusted_key_not_the_books_own():
+    signer, carbon = _stamp_book()
+    other = _signer()
+    forged = forge_demo(carbon.book())["book"]                          # signed under a new key, stamps by the real key
+    stamp = carbon.stamp()
+    assert verify(forged, stamps=[stamp])["why"] == WHY_BAD_STAMP        # no pinned key: the book's key rejects the stamp
+    assert verify(forged, stamps=[stamp], expected_key=other.public_key_hex)["why"] == WHY_KEY
+
+
+@pytest.mark.parametrize("breakage", [
+    lambda s: {**s, "count": float(s["count"])},         # 5.0
+    lambda s: {**s, "count": str(s["count"])},           # "5"
+    lambda s: {**s, "count": True},
+    lambda s: {**s, "count": -1},
+    lambda s: {**s, "count": None},
+    lambda s: {**s, "last_fp": 7},
+    lambda s: {**s, "sig": None},
+    lambda s: {k: v for k, v in s.items() if k != "sig"},
+    lambda s: json.dumps(s),                              # a JSON string instead of an object
+    lambda s: [s],
+    lambda s: None,
+])
+def test_a_malformed_stamp_makes_the_book_changed(breakage):
+    signer, carbon = _stamp_book()
+    out = verify(carbon.book(), stamps=[breakage(carbon.stamp())], expected_key=signer.public_key_hex)
+    assert out["intact"] is False and out["why"] == WHY_BAD_STAMP
+
+
+def test_a_cut_back_book_cannot_hide_behind_a_malformed_stamp():
+    signer, carbon = _stamp_book()
+    recs = carbon.receipts()
+    cut = {"public_key": signer.public_key_hex, "head": _head_at(signer, 3, recs[2]["fp"]), "receipts": recs[:3]}
+    stamp = carbon.stamp()
+    assert verify(cut, stamps=[{**stamp, "count": 5.0}])["intact"] is False
+    assert verify(cut, stamps=[stamp])["why"] == "the book is shorter than a stamp your device already holds"
+
+
+def test_stamps_that_are_not_a_list_make_the_book_changed():
+    signer, carbon = _stamp_book()
+    for bad in (carbon.stamp(), "stamp", 5):
+        assert verify(carbon.book(), stamps=bad)["why"] == WHY_BAD_STAMP
+    assert verify(carbon.book(), stamps=[]) == {"intact": True, "count": 5}
+    assert verify(carbon.book(), stamps=None) == {"intact": True, "count": 5}
+
+
+def test_a_stamp_carries_the_public_key_that_signed_it():
+    signer, carbon = _stamp_book()
+    s = carbon.stamp()
+    assert set(s) == {"count", "last_fp", "sig", "public_key"} and s["public_key"] == signer.public_key_hex
+    assert verify(carbon.book(), stamps=[s], expected_key=s["public_key"]) == {"intact": True, "count": 5}
+
+
+# F6: the right reason -----------------------------------------------------------------------------------------
+
+def test_a_changed_receipt_inside_the_stamped_part_is_named_for_what_it_is():
+    signer, carbon = _stamp_book()
+    recs = carbon.receipts()
+    stamp3 = _head_at(signer, 3, recs[2]["fp"])
+    # a book of the same length where receipt 3 was rewritten and the rest re-chained and re-signed with the SAME key
+    # (someone who holds the key): every receipt is valid, the stamp no longer matches
+    rewritten = CarbonCopy(signer)
+    for i, r in enumerate(recs):
+        rewritten.append(r["kind"], {"t": r["at"], **({"amount": 999} if i == 2 else r["event"])})
+    book = rewritten.book()
+    assert verify(book) == {"intact": True, "count": 5}
+    out = verify(book, stamps=[stamp3])
+    assert out["intact"] is False and out["first_bad"] == 3
+    assert out["why"] == "receipt #3 no longer matches the stamp your device kept"
+    assert "shorter" not in out["why"]
+
+
+def test_only_a_stamp_beyond_the_end_says_shorter():
+    signer, carbon = _stamp_book()
+    recs = carbon.receipts()
+    cut = {"public_key": signer.public_key_hex, "head": _head_at(signer, 4, recs[3]["fp"]), "receipts": recs[:4]}
+    out = verify(cut, stamps=[_head_at(signer, 5, recs[4]["fp"])])
+    assert out["why"] == "the book is shorter than a stamp your device already holds" and out["first_bad"] == 5
+
+
+# robustness of verify itself ------------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("junk", [None, [], "book", 5, {"receipts": "x"}, {"receipts": [None]}, {"receipts": [5, "a"]},
+                                  {"receipts": [{"n": 1}]}])
+def test_verify_fails_closed_on_junk(junk):
+    out = verify(junk) if not isinstance(junk, dict) else verify({**junk, "public_key": "00"})
+    assert out["intact"] is False and out["why"]
+
+
+def test_a_receipt_holding_nan_or_a_date_is_changed_not_a_crash():
+    carbon = CarbonCopy(_signer())
+    carbon.append("verdict", {"t": 1795462000.001, "amount": 1})
+    book = carbon.book()
+    for bad in (float("nan"), datetime.date(2026, 1, 1)):
+        broken = copy.deepcopy(book)
+        broken["receipts"][0]["event"]["amount"] = bad
+        assert verify(broken)["why"] == "its content was changed" and verify(broken)["first_bad"] == 1
+
+
+# F7 / D6: the command line ------------------------------------------------------------------------------------
+
+def test_cli_exits_two_with_a_plain_message_when_the_file_cannot_be_read(tmp_path):
+    missing = _run_cli(tmp_path / "nope.json")
+    assert missing.returncode == 2 and "could not read" in missing.stderr and "Traceback" not in missing.stderr
+    junk = tmp_path / "junk.json"
+    junk.write_text("not json at all", encoding="utf-8")
+    assert _run_cli(junk).returncode == 2
+    binary = tmp_path / "binary.json"
+    binary.write_bytes(b"\xff\xfe\x00\x80\x81")
+    done = _run_cli(binary)
+    assert done.returncode == 2 and "Traceback" not in done.stderr
+    notbook = tmp_path / "list.json"
+    notbook.write_text("[1, 2]", encoding="utf-8")
+    assert _run_cli(notbook).returncode == 2
+
+
+def test_cli_exits_two_when_the_stamps_file_cannot_be_read(tmp_path):
+    bp = tmp_path / "book.json"
+    bp.write_text(json.dumps(_book(("verdict", E1))), encoding="utf-8")
+    done = _run_cli(bp, tmp_path / "no_stamps.json")
+    assert done.returncode == 2 and "Traceback" not in done.stderr
+
+
+def test_cli_still_exits_one_for_a_changed_book_and_zero_for_an_intact_one(tmp_path):
+    book = _book(("verdict", E1), ("owner", E3))
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps(book), encoding="utf-8")
+    book["receipts"][0]["event"]["amount"] = 1
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps(book), encoding="utf-8")
+    assert _run_cli(good).returncode == 0 and _run_cli(bad).returncode == 1
+
+
+def test_cli_key_pins_the_expected_key(tmp_path):
+    book = _book(("verdict", E1))
+    bp = tmp_path / "book.json"
+    bp.write_text(json.dumps(book), encoding="utf-8")
+    right = subprocess.run([sys.executable, "-m", "receipts.carbon", "verify", str(bp), "--key", book["public_key"]],
+                           capture_output=True, text=True, cwd=Path(__file__).resolve().parent.parent)
+    assert right.returncode == 0 and "intact" in right.stdout
+    wrong = subprocess.run([sys.executable, "-m", "receipts.carbon", "verify", str(bp), "--key", "ab" * 32],
+                           capture_output=True, text=True, cwd=Path(__file__).resolve().parent.parent)
+    assert wrong.returncode == 1 and WHY_KEY in wrong.stdout
+    bad_key = subprocess.run([sys.executable, "-m", "receipts.carbon", "verify", str(bp), "--key", "not-hex"],
+                             capture_output=True, text=True, cwd=Path(__file__).resolve().parent.parent)
+    assert bad_key.returncode == 2 and "Traceback" not in bad_key.stderr
+
+
+def test_cli_stamps_with_a_forged_signature_exit_one(tmp_path):
+    signer, carbon = _stamp_book()
+    bp, sp = tmp_path / "book.json", tmp_path / "stamps.json"
+    bp.write_text(json.dumps(carbon.book()), encoding="utf-8")
+    sp.write_text(json.dumps([{**carbon.stamp(), "sig": "AAAA"}]), encoding="utf-8")
+    done = _run_cli(bp, sp)
+    assert done.returncode == 1 and WHY_BAD_STAMP in done.stdout

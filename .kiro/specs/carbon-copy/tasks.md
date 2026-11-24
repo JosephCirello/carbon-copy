@@ -41,3 +41,16 @@
   - [x] 8.3 The switch and the mode on every call in `static/app.js`
   - [x] 8.4 Tests in `tests/test_carbon_app.py`
   - _Requirements: 6_
+
+- [x] 9. The check does not trust the server (two attack reviews, findings F1 to F9)
+  - [x] 9.1 Spec first: Requirement 9, this design and these tasks
+  - [x] 9.2 `safe_json()` and the new `canonical()` (F4, F8, F9); `append()` cleans before it stores; tests for surrogates, NaN, huge ints, 2**60, 298.5, key order for astral characters, Decimal/datetime/set/bytes
+  - [x] 9.3 `Signer.from_env()` takes any key text; one signer per app; `GET /api/carbon/key`; footer (F1)
+  - [x] 9.4 `verify(book, stamps, expected_key)`: key pinning, every stamp's signature, malformed stamps, the two stamp reasons (F1, F2, F5, F6); `stamp()` with the public key
+  - [x] 9.5 Command line: exit 0, 1, 2 and `--key` (F7)
+  - [x] 9.6 `static/carbon_verify.js` and the browser check; the device pins the key and keeps the stamps from approve, decline and every event; fall back to the server with a label (F2, F3)
+  - [x] 9.7 `forge_demo()`, `POST /api/carbon/forge` and the *Try to forge a new book* button (D7)
+  - [x] 9.8 `tests/test_carbon_parity.py` under node (D5)
+  - [x] 9.9 README "Limits we know about" (D8)
+  - [x] 9.10 Full test run, then start the app on the stand-in and call `/` and `/api/carbon/key`
+  - _Requirements: 9_
