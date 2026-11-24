@@ -114,7 +114,7 @@ class Visitor:
     __slots__ = ("sessions", "rules", "live_ledger", "seen")
 
     def __init__(self):
-        self.sessions: dict[str, dict] = {}      # session id -> {"r": Receipts, "t": created}
+        self.sessions: dict[str, dict] = {}      # session id -> {"r": Receipts, "t": last activity}
         self.rules: dict = copy.deepcopy(DEFAULT_RULES)
         self.live_ledger: list[dict] = []
         self.seen = time.time()
@@ -253,7 +253,8 @@ def _admit_new_visitor(request: Request, now: float) -> None:
 
 
 def _run_expired(s: dict, now: float) -> bool:
-    """A run is over when it is older than an hour, or older than 24 hours when a payment in it is still waiting."""
+    """A run is over when its last activity (it starting, or the owner's last approve or decline on it) is more than
+    an hour ago, or more than 24 hours ago when a payment in it is still waiting. ``s["t"]`` is that last activity."""
     age = now - s["t"]
     if age <= SESSION_MAX_AGE_S:
         return False
@@ -651,6 +652,17 @@ def _keep_stamp(request: Request, sid: str, out) -> None:
                 s["stamps"].append(stamp)
 
 
+def _touch(request: Request, sid: str) -> None:
+    """The owner is acting on this run: its hour starts again. Done BEFORE the tap, because the tap can leave the run
+    with nothing waiting, and a run already over an hour old with nothing waiting is dropped on the next request."""
+    v = _visitor(request)
+    if v:
+        with _VISITORS_LOCK:
+            s = v.sessions.get(sid)
+            if s is not None:
+                s["t"] = time.time()
+
+
 @app.post("/api/approve")
 def approve(body: HoldIn, request: Request):
     r = _sessions(request).get(body.session)
@@ -658,6 +670,7 @@ def approve(body: HoldIn, request: Request):
         raise HTTPException(404, "session expired")
     if body.session == "mcp" and r.carbon is not None and r.carbon.size_bytes() >= getattr(r, "mcp_cap_bytes", float("inf")):
         raise HTTPException(409, "This demo's MCP book is full; restart the server to start a new one.")     # an approval sends money: no room for its receipt
+    _touch(request, body.session)
     out = _with_key(r, r.approve(body.hold_id))
     _keep_stamp(request, body.session, out)
     return out
@@ -668,6 +681,7 @@ def decline(body: HoldIn, request: Request):
     r = _sessions(request).get(body.session)
     if not r:
         raise HTTPException(404, "session expired")
+    _touch(request, body.session)
     out = _with_key(r, r.decline(body.hold_id))
     _keep_stamp(request, body.session, out)
     return out

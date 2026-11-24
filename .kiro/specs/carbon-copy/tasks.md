@@ -144,3 +144,9 @@
   - [x] 17.3 F10: 24 hours for a run with a waiting hold, one hour otherwise; the sentence on the phone and the Carbon copy tab; README Limits
   - [x] 17.4 Tests in `tests/test_carbon_round5.py`; both runs; `attack3_size.py` and `attack3_expiry.py` run and reported
   - _Requirements: 17_
+
+- [x] 18. Keep a run for an hour after the owner's last tap
+  - [x] 18.1 Spec first: Requirement 18, design section "Task 18", this task
+  - [x] 18.2 A tap that returns a stamp sets the run's last-activity time; the sentence on the phone, the Carbon copy tab and README Limits
+  - [x] 18.3 Tests in 	ests/test_carbon_round5.py with the clock moved; both runs; ttack3_expiry.py re-run and reported
+  - _Requirements: 18_

@@ -185,6 +185,14 @@ The third attacker round found that one anonymous client of /mcp, which has no l
 
 1. /mcp IS BOUNDED (F11). A request body over 256 KB SHALL get 413 with a plain message before any tool runs (a body with no declared length is held to the same limit). One client address (the rule of the visitor limit: first `X-Forwarded-For` when `RECEIPTS_BEHIND_PROXY=1`, else the socket's) SHALL be allowed 60 /mcp requests a minute, 429 past it.
 2. THE MCP BOOK HAS A CAP, AND FAILS CLOSED (F11). The MCP workspace's book SHALL be measured as it grows (stored JSON, counted per receipt). At 20 MB (`RECEIPTS_MCP_BOOK_MB`) every MCP tool that would move money or change a payee SHALL refuse with "This demo's MCP book is full; restart the server to start a new one." and forward nothing; so SHALL the phone's approval of an MCP hold. Read-only tools and `carbon_book` SHALL still answer. A money move SHALL never happen without its receipt.
-3. A WAITING HOLD KEEPS ITS RUN 24 HOURS (F10). A run with a WAITING hold SHALL be kept for 24 hours; any other run for one hour. Runs per visitor stay capped at 40.
-4. THE TIMES ARE SAID. The phone and the Carbon copy tab SHALL say "This server keeps a run with a payment waiting for you for 24 hours, and any other run for one hour. Download the carbon copies to keep them." The README's Limits SHALL give both numbers, say the hosted demo also loses everything on a restart, and state the /mcp limits.
+3. A WAITING HOLD KEEPS ITS RUN 24 HOURS (F10). A run with a WAITING hold SHALL be kept for 24 hours after its last activity; any other run for one hour after its last activity. Its last activity is the run starting or the owner's last approve or decline on it (amended by Requirement 18). Runs per visitor stay capped at 40.
+4. THE TIMES ARE SAID. The phone and the Carbon copy tab SHALL say the sentence of Requirement 18.2 (amended by Requirement 18). The README's Limits SHALL give both numbers, say the hosted demo also loses everything on a restart, and state the /mcp limits.
 5. TESTS. Each limit SHALL have its own test in `tests/test_carbon_round5.py`, with the clock moved for the two times.
+
+### Requirement 18: a run is kept from its LAST activity (found in the task 17 report)
+
+After a hold waited more than an hour, the owner's approve or decline left the run with nothing waiting and already older than an hour, so the next request dropped it and she could not download the book of her own decision.
+
+1. THE HOUR COUNTS FROM THE LAST ACTIVITY. A run's last activity is the run starting or the owner's last approve or decline on it. A run SHALL be kept for one hour after its last activity, and for 24 hours after it when a hold in it is WAITING.
+2. SAID THE SAME WAY EVERYWHERE. The phone, the Carbon copy tab and the README's Limits SHALL say: "This server keeps a run for one hour after its last activity (it starting, or your last approve or decline), and for 24 hours when a payment in it is waiting for you. Download the carbon copies to keep them."
+3. TEST. With the clock moved: a hold waits 2 hours, is approved, and the run's book can be fetched 59 minutes later and is gone after 61. scratch_attacks/attack3_expiry.py is re-run and reported.

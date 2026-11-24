@@ -1,4 +1,4 @@
-﻿"""Task 17: the two findings task 16 left open (F10 a held payment vanishing after an hour, F11 /mcp memory).
+"""Task 17: the two findings task 16 left open (F10 a held payment vanishing after an hour, F11 /mcp memory).
 
 The stand-in PayPal, no network, no keys: signers are made in memory.
 """
@@ -20,7 +20,7 @@ from receipts import mcp_server  # noqa: E402
 from receipts.carbon import CarbonCopy, Signer, verify  # noqa: E402
 
 README = (ROOT / "README.md").read_text(encoding="utf-8")
-KEEP = ("This server keeps a run with a payment waiting for you for 24 hours, and any other run for one hour. "
+KEEP = ("This server keeps a run for one hour after its last activity (it starting, or your last approve or decline), and for 24 hours when a payment in it is waiting for you. "
         "Download the carbon copies to keep them.")
 DAY, MODEL = "S14_crossed_in_the_mail", "glm-5.3"
 
@@ -90,6 +90,33 @@ def test_f10_a_run_with_nothing_waiting_still_goes_after_an_hour(web, client):
     assert client.get("/api/carbon", params={"sid": sid}).status_code == 200
     age_runs(web, 120)
     assert client.get("/api/carbon", params={"sid": sid}).status_code == 404
+
+
+def test_task18_the_hour_counts_from_the_owners_last_tap(web, client):
+    sid = run_with_hold(client)
+    age_runs(web, 2 * 3600)                                    # the payment waits 2 hours
+    hold = [h for h in client.get("/api/holds").json() if h["status"] == "WAITING"][0]
+    assert client.post("/api/approve", json={"session": sid, "hold_id": hold["id"]}).status_code == 200
+    for h in client.get("/api/holds").json():                  # decide any other waiting payment too: nothing waits now
+        if h["status"] == "WAITING":
+            assert client.post("/api/decline", json={"session": sid, "hold_id": h["id"]}).status_code == 200
+    age_runs(web, 59 * 60)
+    book = client.get("/api/carbon", params={"sid": sid})
+    assert book.status_code == 200 and book.json()["receipts"]   # the book that records her decision can be fetched
+    age_runs(web, 2 * 60)                                      # 61 minutes after the tap
+    assert client.get("/api/carbon", params={"sid": sid}).status_code == 404
+
+
+def test_task18_a_second_tap_starts_the_hour_again_and_a_run_still_waiting_keeps_24_hours(web, client):
+    sid = run_with_hold(client)
+    waiting = [h for h in client.get("/api/holds").json() if h["status"] == "WAITING"]
+    age_runs(web, 50 * 60)
+    assert client.post("/api/decline", json={"session": sid, "hold_id": waiting[0]["id"]}).status_code == 200
+    if len(waiting) > 1:                                       # another payment still waits: 24 hours from that tap
+        age_runs(web, 23 * 3600)
+        assert client.get("/api/carbon", params={"sid": sid}).status_code == 200
+        age_runs(web, 2 * 3600)
+        assert client.get("/api/carbon", params={"sid": sid}).status_code == 404
 
 
 def test_f10_the_numbers_and_the_sentence_are_said_everywhere():
