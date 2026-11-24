@@ -17,3 +17,5 @@ services:
         value: standin
       - key: RECEIPTS_MCP_ON_PHONE
         value: "0"            # each visitor sees only their own held payments; the shared MCP workspace stays off the phone
+      - key: RECEIPTS_BEHIND_PROXY
+        value: "1"            # Render's proxy sets X-Forwarded-For; the per-address limit on new visitors reads the first address

@@ -37,6 +37,11 @@ Run the tests (no network, no keys): `.venv\Scripts\python.exe -m pytest -q`
 
 Check a downloaded book from the command line: `.venv\Scripts\python.exe -m receipts.carbon verify book.json [--stamps stamps.json]`. It exits 0 when intact, 1 when changed and 2 when the file could not be read. `--key <64 hex characters>` names the public key to trust: a book signed with any other key is changed. The file works as it is whether it is a bare book or the file *Download the carbon copies* writes: for that file the command uses the stamps and the trusted key inside it, unless you give `--stamps` or `--key`, which win.
 
+**Check a download without trusting our server.** The *Check the book* button runs code that the server sends you, so it cannot be the only check (see *Limits we know about*). Two checks do not depend on us, each on a file you downloaded with *Download the carbon copies*:
+
+- The command line from a fresh clone of this repository: `python -m receipts.carbon verify carbon_copies.json --key-file HOSTED_KEY.txt`. The hosted demo's public key is published here and in `HOSTED_KEY.txt`: `345c0cf441241146d896623a4dc08bc3a7c0f004c60975e2d072382552a9f6e1` (read back from https://carbon-copy-ywv3.onrender.com/api/carbon/key on 2026-11-24). `--key-file` takes the first 64-character key in a text file and cannot be combined with `--key`. When the file holds no key from your device, or no stamp, the command prints a line under the verdict saying the check could only compare the book with itself, or could not tell whether the end was rewritten.
+- `verify.html`: one file with no network use at all. Save it from GitHub (the *Raw* button), open it from your own disk and drop the downloaded file on it. It shows INTACT or CHANGED with the reason, the key the download trusts beside the published key, and whether they match. It is built by `tools/build_verify.py`, which places `static/carbon_verify.js` in it byte for byte; a test fails if they differ. SHA-256 of `verify.html`, so you can check the copy you saved: `668be87ddb4687ee192d4bfa801d7328087aad7b71ca67b618d77a2ffed03194` (`certutil -hashfile verify.html SHA256` on Windows, `sha256sum verify.html` elsewhere).
+
 **The MCP book.** Everything an AI does through `/mcp` (or `python -m receipts.mcp_server`) gets its own book, signed by the same key as the web runs and opened by a sealed first receipt (live, model "mcp client"). The MCP tool `carbon_book` returns it: public key, signed head, every receipt. Save the answer to a file and check it with no secret: `.venv\Scripts\python.exe -m receipts.carbon verify mcp-book.json`. The book lives in the server's memory, so a restart starts a new one (download it first if you want to keep it).
 
 By default the MCP holds do not appear on the web phone. `RECEIPTS_MCP_ON_PHONE=1` puts them there, and then a tap writes the owner's receipt into the MCP book and shows its stamp. With it on, anyone who can open the page can decide the MCP holds, so it is for your own machine only.
@@ -79,6 +84,16 @@ fp = hashlib.sha256(text.encode("utf-8")).hexdigest()
 In a browser, `JSON.stringify` with keys sorted by Unicode code point (not UTF-16 unit) gives the same text. `sig` is the Ed25519 signature, in base64, over the 32 bytes of `fp`.
 - No AI model decides a payment. A model may propose; plain code decides ALLOW, HOLD or BLOCK.
 
+## What we measured on the book
+
+`tests/test_carbon_recorded_runs.py` (marked `recorded`; run with `pytest -m recorded -q`, about four minutes, no network and no key) replays every recorded run in both arms the way the app's replay does, then checks the book. On the final build it printed:
+
+- 1,444 recorded runs, so 2,888 books (the check on, and nothing checking), 45,571 receipts in all, 7 to 153 per book.
+- Every honest book intact: 2,888 of 2,888, and again after a JSON round trip.
+- Every receipt of every book changed, one at a time: 45,571 of 45,571 caught at that receipt, none missed, none blamed on another receipt.
+- A changed copy, a forgery re-signed under a new key, two receipts swapped and the last receipt cut off with the head re-signed by the real key: each caught in 2,888 of 2,888 books, with the device's stamps. (Cut off with no stamp at all, the real key's book reads intact: the limit above.)
+- The browser's check (`static/carbon_verify.js` under node) and Python gave the same answer, receipt and reason on 17,478 of 17,478 checks.
+
 ## How Kiro built it
 
 Kiro wrote Carbon Copy from a spec, with the rules fixed in steering files and three hooks watching the work. Work went in task by task, one commit per task or pair of tasks. This section answers the questions the Kiroween rules ask.
@@ -111,6 +126,9 @@ The spec changed when gaps were found, eight times:
 
 ## Limits we know about
 
+- **The check in the page runs code our server sends.** A dishonest operator could send a check that lies, or serve the page with a different `carbon_verify.js`. The page now keeps the check it loaded and freezes it, and the AG Grid script carries an integrity hash, but none of that helps against whoever serves the page. The two checks that do not depend on us are the command line from a fresh clone and `verify.html` saved from GitHub, each on a downloaded file, with the key from `HOSTED_KEY.txt`.
+- **The server keeps a run for one hour.** A run, its book and any payment held in it are gone from the server after an hour (and when it restarts). The page says so, and a held payment that lapsed says it lapsed and was never sent to PayPal. Download the carbon copies to keep a run. The server keeps at most 40 runs per visitor and 300 visitors; past that the least recently seen visitor with no waiting payment and no run under an hour old goes first. One address can start 30 new visitors in 10 minutes. Rules are limited to 20,000 characters of words and 200 quotes of 2,000 characters each. The MCP workspace keeps its last 200 holds and 500 verdicts in memory and cuts any argument over 64 KB (its book keeps everything).
+- **A very large book is slow to check.** Measured: 1,000 receipts take 0.4 s in Python; 10,000 take 4 s in Python and 6.5 s in a browser; 50,000 take 20 s in Python and 31 s in a browser. So a book of 10,000 receipts takes about 6 seconds in a browser and 50,000 about 30. Real runs' books hold 7 to 153 receipts.
 - The stand-in mirrors PayPal's API shapes. It is not PayPal. The hosted demo uses it, so no real or sandbox PayPal order is created there.
 - **The device has to have seen the key first.** The check trusts the key the device pinned from the first stamp it received (trust on first use). A device that has never seen the book has nothing to hold a forgery up against, and a first visit to a forged copy would pin the forger's key. A server restart without `CARBON_COPY_KEY` makes a new temporary key, and the device then rightly refuses the new books until it is told to forget the old key.
 - **Anything after the last stamp the device saw can still be rewritten by whoever holds the key.** Stamps cover every moment the device was watching, not the time it was closed. A book cut back or rewritten beyond the device's last stamp is not caught by that device.

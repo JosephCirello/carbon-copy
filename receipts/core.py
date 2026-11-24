@@ -185,6 +185,8 @@ class Receipts:
             h = next((h for h in self.holds if h["id"] == hold_id and h["status"] == "WAITING"), None)
             if not h:
                 return {"error": "no such waiting hold"}
+            if h.get("cut"):    # an argument was too long to keep whole (the MCP history): what it said cannot be sent on
+                return {"error": "this payment's details were too long to keep, so it cannot be approved; decline it and ask again"}
             h["status"] = "APPROVED"
             self.emit(type="owner", action="approved", hold_id=hold_id)
             raised = False

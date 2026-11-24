@@ -1,0 +1,5 @@
+345c0cf441241146d896623a4dc08bc3a7c0f004c60975e2d072382552a9f6e1
+
+The public key the hosted Carbon Copy demo signs its books with (https://carbon-copy-ywv3.onrender.com).
+Read back from https://carbon-copy-ywv3.onrender.com/api/carbon/key on 2026-11-24. It is a public key: it can check a book, not sign one.
+Check a download against it:  python -m receipts.carbon verify <file> --key-file HOSTED_KEY.txt

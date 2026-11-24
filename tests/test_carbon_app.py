@@ -301,6 +301,7 @@ def test_an_event_holding_nan_does_not_break_the_stream(web):
 # Task 10: what a judge trips on. The page and the script are read as shipped; the Kiro files and the README are checked
 # for what the spec says they hold. No network, no keys.
 # ---------------------------------------------------------------------------------------------------------------------
+import hashlib  # noqa: E402
 import json  # noqa: E402
 import re  # noqa: E402
 import shutil  # noqa: E402
@@ -311,6 +312,7 @@ HTML = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
 JS = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
 CSS = (ROOT / "static" / "style.css").read_text(encoding="utf-8")
 README = (ROOT / "README.md").read_text(encoding="utf-8")
+PUBLISHED_IN_README = {"345c0cf441241146d896623a4dc08bc3a7c0f004c60975e2d072382552a9f6e1", hashlib.sha256((ROOT / "verify.html").read_bytes()).hexdigest()}      # Task 16: the hosted key is public, on purpose
 SPEC = ROOT / ".kiro" / "specs" / "carbon-copy"
 
 
@@ -425,7 +427,7 @@ def test_readme_is_in_line_with_task_10():
     section = README[README.index("## How Kiro built it"):README.index("## Limits we know about")]
     for word in ("Kiro CLI, headless", "Spec-driven", "Steering", "Hooks", "Property-based", "MCP", "Custom agent", "Powers", "None were used"):
         assert word in section, word
-    assert not re.search(r"[0-9a-fA-F]{64}", README)
+    assert set(re.findall(r"[0-9a-fA-F]{64}", README)) <= PUBLISHED_IN_README      # no seed or private key: only the published public key and the hash of verify.html
 
 
 def test_spec_carries_requirement_10_and_task_10():
@@ -559,7 +561,7 @@ def test_readme_is_in_line_with_task_11():
     assert "kiro-cli mcp list" in section and "Mode 'carbon-attacker' not found" in section
     assert "aren't available to me" in section
     assert '"at": at' not in README and '"at_ms": at_ms' in README
-    assert not re.search(r"[0-9a-fA-F]{64}", README)
+    assert set(re.findall(r"[0-9a-fA-F]{64}", README)) <= PUBLISHED_IN_README      # no seed or private key: only the published public key and the hash of verify.html
 
 
 def test_tamper_returns_the_changed_copy_and_it_fails_the_check_for_the_reason_given(client):

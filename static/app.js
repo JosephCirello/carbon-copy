@@ -1,3 +1,5 @@
+/* The check is captured once, when the page loads: a script that runs later cannot swap it (carbon_verify.js freezes it). */
+const CHECK = window.CarbonVerify;
 /* Carbon Copy, the client. Plain JavaScript; AG Grid Community for the ledger and results tables. */
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -39,7 +41,7 @@ function deviceStamps(run) {
     let list = [];
     try {
       const text = devStore("get", DEV_STAMPS + run) || "[]";
-      const got = window.CarbonVerify && window.CarbonVerify.parseStamps ? window.CarbonVerify.parseStamps(text) : JSON.parse(text);   // a count written 6.0 is not a whole number
+      const got = CHECK && CHECK.parseStamps ? CHECK.parseStamps(text) : JSON.parse(text);   // a count written 6.0 is not a whole number
       if (Array.isArray(got)) list = got.filter(devPlainStamp);
     } catch {}
     DEVICE.stamps[run] = list;
@@ -399,7 +401,7 @@ function gapText(g) {
 /* ---------- owner ---------- */
 // A visitor's held payments live in the server's memory. When the server restarts, or a run is more than an hour
 // old, they are gone from it: the card on the phone then says so in plain words instead of keeping buttons that do nothing.
-const EXPIRED_TEXT = "This one has expired, because the demo restarted or it waited too long. Go back to Watch and press Run the day again.";
+const EXPIRED_TEXT = "This one has expired, because the demo restarted or it waited too long. It lapsed and was never sent to PayPal. Go back to Watch and press Run the day again.";
 const NO_HOLDS = $("#holds").innerHTML;          // the phone with nothing on it, as the page ships it
 const holdKey = (h) => h.session + "/" + h.id;
 const PHONE_STAMPS = {};                         // hold key -> how many receipts the book had at the stamp the phone kept
@@ -430,6 +432,7 @@ function drawHolds() {
   const isWaiting = (h) => h.status === "WAITING";
   const waiting = SHOWN.filter(isWaiting).length;
   $("#holdCount").hidden = !waiting; $("#holdCount").textContent = waiting; keepTabInView();
+  $("#phKeep").hidden = !(SHOWN.length || GONE.length);      // a run is kept for one hour: say so while one is on the phone
   const box = $("#holds");
   const sig = JSON.stringify([SHOWN.map((h) => [h.session, h.id, h.status]), GONE.map(holdKey), PHONE_STAMPS]);
   if (sig === box.dataset.sig) return;          // unchanged: do not re-render (keeps the cards steady)
@@ -550,6 +553,7 @@ function drawCarbon() {
   sw.hidden = !(CC && CC.has_twin);
   if (CC && CC.receipts && CC.receipts.length) sw.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === ccRunMode())));
   ["#ccCheck", "#ccTamper", "#ccForge", "#ccDownload"].forEach((s) => ($(s).disabled = !hasBook));
+  $("#ccKeep").hidden = !hasBook;                // the server keeps a run for one hour
   drawDevice();
   if (!hasBook) {
     $("#ccSub").textContent = CC_EMPTY;
@@ -615,14 +619,14 @@ const NO_FRESH = "Could not fetch the current book from the server, so nothing w
 async function restartNoteHtml(bookKey) {      // plain words under the verdict; the verdict itself is not touched
   try {
     const k = await (await fetch("/api/carbon/key")).json();
-    const note = window.CarbonVerify ? window.CarbonVerify.restartNote(bookKey, devicePinned(), k.temporary) : null;
+    const note = CHECK ? CHECK.restartNote(bookKey, devicePinned(), k.temporary) : null;
     return note ? `<p class="cc-say cc-restart">${esc(note)}</p>` : "";
   } catch { return ""; }
 }
 async function checkOnDevice(book) {
   const stamps = deviceStamps(CC.session), key = devicePinned();
-  if (window.CarbonVerify && await window.CarbonVerify.supportsEd25519()) {
-    return { out: await window.CarbonVerify.verify(book, stamps, key), where: "browser" };
+  if (CHECK && await CHECK.supportsEd25519()) {
+    return { out: await CHECK.verify(book, stamps, key), where: "browser" };
   }
   const res = await fetch("/api/carbon/verify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ book, stamps, expected_key: key }) });
   if (!res.ok) return null;

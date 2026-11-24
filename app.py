@@ -92,10 +92,17 @@ DEFAULT_RULES = {"policy": dict(BIZ and {**DEFAULT_POLICY, **json.loads((ROOT / 
 # ---- one state per visitor ------------------------------------------------------------------------------
 VISITOR_COOKIE = "receipts_visitor"
 VISITOR_SCOPE_KEY = "receipts.visitor"
+ISSUED_SCOPE_KEY = "receipts.visitor_issued"      # True when this request carried no cookie and was handed a new id
 MAX_VISITORS = int(os.environ.get("RECEIPTS_MAX_VISITORS", "300"))            # least recently used is dropped past this
 VISITOR_IDLE_S = float(os.environ.get("RECEIPTS_VISITOR_IDLE_HOURS", "3")) * 3600
 SESSION_MAX_AGE_S = 3600            # a run and its holds are kept for an hour
 MAX_SESSIONS_PER_VISITOR = 40       # oldest run dropped past this
+NEW_VISITORS_PER_ADDRESS = 30       # new visitors one client address may start ...
+NEW_VISITOR_WINDOW_S = 600          # ... in this many seconds
+BEHIND_PROXY = os.environ.get("RECEIPTS_BEHIND_PROXY", "0") == "1"      # on Render: the client address is the first X-Forwarded-For
+MAX_ENGLISH_CHARS = 20_000          # the owner's rules in words
+MAX_SOURCES = 200                   # quotes kept beside the rules
+MAX_SOURCE_CHARS = 2_000            # one quote
 _VISITOR_ID_OK = re.compile(r"^[A-Za-z0-9_-]{24,64}$")
 
 
@@ -135,6 +142,7 @@ class VisitorCookie:
         if issued:
             vid = secrets.token_urlsafe(32)
         scope[VISITOR_SCOPE_KEY] = vid
+        scope[ISSUED_SCOPE_KEY] = issued
         if not issued:
             return await self.inner(scope, receive, send)
         https = scope.get("scheme") == "https" or headers.get("x-forwarded-proto", "").split(",")[0].strip().lower() == "https"
@@ -151,9 +159,53 @@ class VisitorCookie:
 app.add_middleware(VisitorCookie)
 
 
-def _visitor(request: Request, create: bool = False) -> Visitor | None:
+_NEW_BY_ADDRESS: dict[str, list[float]] = {}      # client address -> when it started its recent new visitors
+
+
+def _client_address(request: Request) -> str:
+    """Who is asking: the first X-Forwarded-For address when the server sits behind a proxy that sets it
+    (RECEIPTS_BEHIND_PROXY=1, as on Render), else the socket's own address."""
+    if BEHIND_PROXY:
+        first = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+        if first:
+            return first[:64]
+    return request.client.host if request.client else "unknown"
+
+
+def _admit_new_visitor(request: Request, now: float) -> None:
+    """Count one new visitor against this address; past the limit, 429 in plain words. Caller holds _VISITORS_LOCK."""
+    addr = _client_address(request)
+    recent = [t for t in _NEW_BY_ADDRESS.get(addr, []) if now - t < NEW_VISITOR_WINDOW_S]
+    if len(recent) >= NEW_VISITORS_PER_ADDRESS:
+        _NEW_BY_ADDRESS[addr] = recent
+        raise HTTPException(429, "Too many new visitors have started from your address in the last few minutes. Please wait ten minutes and try again.")
+    recent.append(now)
+    _NEW_BY_ADDRESS[addr] = recent
+    if len(_NEW_BY_ADDRESS) > 5000:                      # forget addresses that have been quiet for a whole window
+        for k in [k for k, v in _NEW_BY_ADDRESS.items() if not v or now - v[-1] >= NEW_VISITOR_WINDOW_S]:
+            _NEW_BY_ADDRESS.pop(k, None)
+
+
+def _holds_something(v: "Visitor", now: float) -> bool:
+    """A visitor worth keeping when the table is full: a payment waiting for them, or a run younger than an hour."""
+    return any(now - s["t"] <= SESSION_MAX_AGE_S or any(h.get("status") == "WAITING" for h in s["r"].holds) for s in list(v.sessions.values()))
+
+
+def _make_room(now: float, keep: str | None = None) -> None:
+    """Past MAX_VISITORS, drop the least recently seen visitor who has no waiting hold and no run younger than an
+    hour; only when there is none, drop the least recently seen of all. ``keep`` (the visitor just made) is never the one\n    dropped. Caller holds _VISITORS_LOCK."""
+    while len(VISITORS) > max(1, MAX_VISITORS):
+        others = [(k, v) for k, v in VISITORS.items() if k != keep]
+        if not others:
+            return
+        victim = next((k for k, v in others if not _holds_something(v, now)), others[0][0])
+        VISITORS.pop(victim, None)
+
+
+def _visitor(request: Request, create: bool = False, may_start: bool = True) -> Visitor | None:
     """This visitor's state. Reading never creates one (a visitor who has done nothing costs no memory);
-    acting does. Idle visitors expire, and past MAX_VISITORS the least recently seen is dropped."""
+    acting does. ``may_start`` is False for a request that does not start a run: with no cookie of its own it
+    creates nothing. Idle visitors expire, and past MAX_VISITORS room is made (see ``_make_room``)."""
     vid = request.scope.get(VISITOR_SCOPE_KEY)
     now = time.time()
     with _VISITORS_LOCK:
@@ -161,13 +213,13 @@ def _visitor(request: Request, create: bool = False) -> Visitor | None:
             VISITORS.pop(k, None)
         v = VISITORS.get(vid) if vid else None
         if v is None:
-            if not create:
+            if not create or (not may_start and request.scope.get(ISSUED_SCOPE_KEY, True)):
                 return None
+            _admit_new_visitor(request, now)
             v = Visitor()
             if vid:
                 VISITORS[vid] = v
-                while len(VISITORS) > max(1, MAX_VISITORS):
-                    VISITORS.popitem(last=False)
+                _make_room(now, keep=vid)
         else:
             VISITORS.move_to_end(vid)
         v.seen = now
@@ -239,7 +291,14 @@ class PolicyIn(BaseModel):
 def set_policy(body: PolicyIn, request: Request):
     """This visitor's rules, for this visitor's runs from now on. Nobody else's change."""
     from receipts.compiler import _validate
-    rules = _visitor(request, create=True).rules
+    if len(body.english) > MAX_ENGLISH_CHARS:
+        raise HTTPException(413, f"Those rules are too long to keep: the most is {MAX_ENGLISH_CHARS:,} characters.")
+    if len(body.sources) > MAX_SOURCES or any(len(str(k)) > MAX_SOURCE_CHARS or len(v if isinstance(v, str) else json.dumps(v, default=str)) > MAX_SOURCE_CHARS for k, v in body.sources.items()):
+        raise HTTPException(413, f"Those quotes are too long to keep: at most {MAX_SOURCES} of them, each up to {MAX_SOURCE_CHARS:,} characters.")
+    visitor = _visitor(request, create=True, may_start=False)
+    if visitor is None:
+        raise HTTPException(400, "Please load the page first, then save your rules.")
+    rules = visitor.rules
     rules.update({"policy": _validate(body.policy), "english": body.english or rules["english"],
                   "sources": body.sources, "compiled_by": body.compiled_by})
     return rules

@@ -334,3 +334,24 @@ The prompt says every command sets `PAYPAL_MODE=standin`, never starts the sandb
 **F14.** `approve` and `decline` take `carbon.head()`.
 
 Tests are in `tests/test_carbon_round3.py`.
+
+
+## Task 16: a check that does not need to trust us, and honest limits
+
+**F8, the check's code.** `static/carbon_verify.js` ends with `Object.freeze(api)` and defines `root.CarbonVerify` as a read-only, non-writable property, so a later assignment does nothing. `static/app.js` begins with `const CHECK = window.CarbonVerify`, and every use reads `CHECK`. The AG Grid `<script>` has `integrity="sha384-..."` and `crossorigin="anonymous"`. `tools/build_verify.py` reads `static/carbon_verify.js` as bytes and writes `verify.html`, a template with that code placed between `<script>` tags (the code holds no `</script>`; the builder refuses if it does) and a small page script of its own. The page has no `src`, `href` or `@import` that leaves the file. A dropped file is read with `FileReader`, parsed as the CLI parses it (the download `{book, stamps, trusted_key}` or a bare book), checked with `CarbonVerify.verify`, and shown as INTACT or CHANGED with the reason and the two notes about no key and no stamp. `HOSTED_KEY` is written into the page by the builder beside a line "The key this download trusts" and a match or no-match sentence.
+
+**F9, the published key.** `HOSTED_KEY.txt` holds the 64 hex characters and a line saying where they came from. `python -m receipts.carbon verify <file> --key-file HOSTED_KEY.txt` reads the first 64-hex word. `--key` and `--key-file` together exit 2.
+
+**F7, the caveats.** `caveats(trusted_key, stamps)` in `receipts/carbon.py` returns the two sentences as the page prints them. The command line prints them after the verdict line, intact or changed (on standard output, exit code unchanged), both when both are missing.
+
+**F10.** `static/index.html` carries the one-hour sentence on the phone and the Carbon copy tab; `expiredCard` says the payment lapsed and was never sent to PayPal.
+
+**F4, the visitors.** `VisitorCookie` still issues a cookie, but a visitor object is created only by `_visitor(request, create=True)`, called by `/api/run` and `/api/replay`; `POST /api/policy` uses `_visitor(request)` and answers 400 when there is none. A request is a new visitor when it carries no valid cookie; `_admit(request)` counts new visitors per client address in a 10-minute window (30), answering 429. Eviction: `_make_room()` drops, oldest first, a visitor with no WAITING hold and no run younger than an hour; only when there is none does it drop the oldest.
+
+**F11, MCP.** After every tool call `mcp_server` trims the history: `r.verdicts[-500:]`, `r.holds[-200:]`, and an argument string over 64 KB becomes its first 64 KB plus `(cut: N bytes)` with `cut` set on the hold. `Receipts.approve` refuses a hold with `cut`. The book is untouched. `receipts_holds(limit=50)` returns the newest first.
+
+**F12.** `set_policy` checks sizes before `_validate`, 413.
+
+**The recorded runs.** `tests/test_carbon_recorded_runs.py` replays through `make_paypal` and `Receipts(... carbon=CarbonCopy(SIGNER))` as `replay()` does in `app.py`, declines every hold as the owner, and runs the checks of the outside measurement. It prints its numbers.
+
+Tests are in `tests/test_carbon_round4.py` and `tests/test_carbon_recorded_runs.py`.

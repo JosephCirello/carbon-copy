@@ -18,3 +18,5 @@ jobs:
         run: pip install -r requirements.txt
       - name: Run the tests (no keys, no network)
         run: pytest -q
+      - name: Replay every recorded run through the book (its own step, about ten minutes)
+        run: pytest -m recorded -q

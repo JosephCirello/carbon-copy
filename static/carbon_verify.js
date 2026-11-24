@@ -154,5 +154,8 @@
 
   const api = { verify, restartNote, canonical, fingerprint, supportsEd25519, codePointCompare, parseStamps };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
-  root.CarbonVerify = api;
+  Object.freeze(api);                              // nothing can add to or replace the check's functions
+  try {                                            // and nothing can assign a different check to the name later
+    Object.defineProperty(root, "CarbonVerify", { value: api, writable: false, configurable: false, enumerable: true });
+  } catch (e) { /* already defined by an earlier load of this same file */ }
 })(typeof globalThis !== "undefined" ? globalThis : this);

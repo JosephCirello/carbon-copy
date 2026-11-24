@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<title>Check a Carbon Copy book</title>
+<style>
+  body { font-family: system-ui, "Segoe UI", sans-serif; max-width: 44rem; margin: 2rem auto; padding: 0 1rem; color: #1d2433; background: #fffdf8; line-height: 1.5; }
+  h1 { margin-bottom: .2rem; }
+  .drop { border: 3px dashed #8a93a8; border-radius: 14px; padding: 2.2rem 1rem; text-align: center; background: #fff; cursor: pointer; }
+  .drop.over { border-color: #1d2433; background: #f0f3fa; }
+  .stamp { display: inline-block; font-family: "Courier New", monospace; font-weight: 700; font-size: 2rem; padding: .2rem 1rem; border: 4px solid; border-radius: 8px; transform: rotate(-3deg); margin: 1rem 0 .4rem; }
+  .stamp.ok { color: #1b7a3a; }
+  .stamp.bad { color: #b3261e; }
+  .note { color: #7a5200; }
+  .mono { font-family: "Courier New", monospace; overflow-wrap: anywhere; }
+  .keys { border: 1px solid #cfd4e0; border-radius: 10px; padding: .6rem 1rem; background: #fff; }
+  .fine { color: #55607a; font-size: .92rem; }
+</style>
+</head>
+<body>
+<h1>Check a Carbon Copy book</h1>
+<p>This page checks a book of carbon copies that you downloaded from the Carbon copy tab. It works on your own computer and does not need the internet. Nothing you drop here leaves this page.</p>
+<div class="drop" id="drop" tabindex="0" role="button" aria-label="Choose the downloaded file, or drop it here">
+  <p><b>Drop the downloaded file here</b>, or choose it.</p>
+  <input type="file" id="pick" accept=".json,application/json">
+</div>
+<div id="result" aria-live="polite"></div>
+<div class="keys" id="keys" hidden></div>
+<p class="fine">The key published for the hosted demo is <span class="mono" id="pubKey"></span>. It is also in HOSTED_KEY.txt in the repository. Save this page from GitHub, not from the demo, so the check does not come from the server it checks.</p>
+<script id="carbon-verify">/* Carbon Copy: the check, in the browser (and under node, for the parity test).
+ *
+ * verify(book, stamps, pinnedKey) answers the same question as receipts/carbon.py verify(), in the same plain
+ * words, using only the book, the stamps this device kept and the key this device trusts. It never asks the
+ * server. SHA-256 and Ed25519 come from crypto.subtle.
+ *
+ * The fingerprint recipe: SHA-256 over the UTF-8 bytes of the receipt's {n, at_ms, kind, event, prev} written as JSON
+ * with keys sorted by Unicode code point, no spaces, and text kept as UTF-8. A book holds only strings, safe
+ * integers, booleans, null, lists and objects (the server cleans everything else before it writes a receipt), so
+ * JSON.stringify of each piece gives the bytes Python gives.
+ */
+(function (root) {
+  "use strict";
+  const GENESIS = "0".repeat(64);
+  const WHY_KEY = "it was signed with a different key than the one your device trusts";
+  const WHY_STAMP_BAD = "a stamp on your device is damaged or forged";
+  const WHY_SHORT = "the book is shorter than a stamp your device already holds";
+  const WHY_UNREADABLE = "this is not a carbon-copy book we can read";
+  const WHY_BAD_KEY = "its public key is not written the way a key must be";
+  const SEALED = new Set(["n", "at_ms", "kind", "event", "prev", "fp", "sig"]);   // the seven keys a receipt carries, and no others
+  const KEY64 = /^[0-9a-f]{64}$/;                    // a public key: exactly 64 lowercase hex characters
+  const subtle = () => (root.crypto && root.crypto.subtle) || null;
+  const enc = new TextEncoder();
+
+  function codePointCompare(a, b) {                 // order keys by Unicode code point, not by UTF-16 unit
+    let i = 0, j = 0;
+    while (i < a.length && j < b.length) {
+      const x = a.codePointAt(i), y = b.codePointAt(j);
+      if (x !== y) return x < y ? -1 : 1;
+      i += x > 0xffff ? 2 : 1; j += y > 0xffff ? 2 : 1;
+    }
+    return i < a.length ? 1 : j < b.length ? -1 : 0;   // one is the start of the other: the shorter comes first
+  }
+
+  function canonical(x) {                           // the text whose UTF-8 bytes are fingerprinted
+    if (x === null) return "null";
+    switch (typeof x) {
+      case "string": return JSON.stringify(x);
+      case "boolean": return x ? "true" : "false";
+      case "number":
+        if (!Number.isFinite(x)) throw new Error("a number that is not a number");
+        return JSON.stringify(x);
+      case "object":
+        if (Array.isArray(x)) return "[" + x.map(canonical).join(",") + "]";
+        return "{" + Object.keys(x).sort(codePointCompare).map((k) => JSON.stringify(k) + ":" + canonical(x[k])).join(",") + "}";
+      default: throw new Error("a value JSON cannot hold");
+    }
+  }
+
+  const toHex = (buf) => Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, "0")).join("");
+  const fromHex = (h) => {
+    if (typeof h !== "string" || !/^([0-9a-fA-F]{2})*$/.test(h)) throw new Error("not hex");
+    return Uint8Array.from(h.match(/../g) || [], (p) => parseInt(p, 16));
+  };
+  const fromBase64 = (s) => {                      // canonical base64 only: the text must be what re-encoding the bytes gives
+    if (typeof s !== "string" || !/^[A-Za-z0-9+/]*={0,2}$/.test(s) || s.length % 4) throw new Error("not base64");
+    const bin = atob(s);
+    if (btoa(bin) !== s) throw new Error("not the canonical spelling");
+    return Uint8Array.from(bin, (c) => c.charCodeAt(0));
+  };
+
+  async function fingerprint(x) {
+    return toHex(await subtle().digest("SHA-256", enc.encode(canonical(x))));
+  }
+
+  async function signatureOk(keyHex, fpHex, sigB64) {
+    try {
+      if (typeof keyHex !== "string" || !KEY64.test(keyHex)) return false;
+      const key = await subtle().importKey("raw", fromHex(keyHex), { name: "Ed25519" }, false, ["verify"]);
+      return await subtle().verify({ name: "Ed25519" }, key, fromBase64(sigB64), fromHex(fpHex));
+    } catch (e) { return false; }
+  }
+
+  /* Can this browser verify Ed25519? (Older browsers cannot; the page then asks the server and says so.) */
+  async function supportsEd25519() {
+    try {
+      const probe = fromHex("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a");
+      await subtle().importKey("raw", probe, { name: "Ed25519" }, false, ["verify"]);
+      return true;
+    } catch (e) { return false; }
+  }
+
+  const changed = (count, why, firstBad) => {
+    const out = { intact: false, count };
+    if (firstBad !== undefined && firstBad !== null) out.first_bad = firstBad;
+    out.why = why;
+    return out;
+  };
+  const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+  const isWhole = (v) => typeof v === "number" && Number.isInteger(v);
+  const timeOk = (v) => typeof v === "number" && Number.isSafeInteger(v) && v >= 0;   // whole milliseconds from 0 to 2^53 - 1
+
+  /* Stamps read from text. A browser cannot tell 6.0 from 6 once JSON is parsed, so a stamp count written as anything but
+     a plain whole number (6.0, 6e0) is read as a marker that is not a number: that stamp is damaged, as in the Python check. */
+  function parseStamps(text) {
+    return JSON.parse(text, (k, v, ctx) =>
+      (k === "count" && typeof v === "number" && ctx && typeof ctx.source === "string" && !/^-?\d+$/.test(ctx.source)) ? { written_as: ctx.source } : v);
+  }
+  const CONTENT_KEYS = ["n", "at_ms", "kind", "event", "prev", "fp"];   // all must be present: a missing key is not a null
+
+  async function stampOk(stamp, keyHex) {
+    if (!isObj(stamp)) return false;
+    const { count, last_fp: lastFp, sig } = stamp;
+    if (!isWhole(count) || count < 0 || typeof lastFp !== "string" || typeof sig !== "string") return false;
+    return signatureOk(keyHex, await fingerprint({ count, last_fp: lastFp }), sig);
+  }
+
+  async function verify(book, stamps, pinnedKey) {
+    if (typeof stamps === "string") { try { stamps = parseStamps(stamps); } catch (e) { stamps = "not a list"; } }
+    if (!isObj(book) || !Array.isArray(book.receipts)) return changed(0, WHY_UNREADABLE, 1);   // any shape but an object holding a list of receipts
+    const receipts = book.receipts;
+    const count = receipts.length;
+    const publicKey = book.public_key;
+    if (typeof publicKey !== "string" || !KEY64.test(publicKey)) return changed(count, WHY_BAD_KEY);
+    if (pinnedKey != null && (typeof pinnedKey !== "string" || publicKey.toLowerCase() !== pinnedKey.toLowerCase())) return changed(count, WHY_KEY);
+    let prev = GENESIS;
+    for (let i = 0; i < count; i++) {
+      const r = receipts[i];
+      if (!isObj(r)) return changed(count, "its content was changed", i + 1);
+      if (Object.keys(r).some((k) => !SEALED.has(k))) return changed(count, `receipt #${i + 1} carries something outside its seal`, i + 1);
+      const n = r.n;
+      if (n !== i + 1) return changed(count, "a receipt is missing", i + 1);
+      if (r.prev !== prev) return changed(count, "its link to the receipt before was broken", n);
+      let contentOk = false;
+      try { contentOk = CONTENT_KEYS.every((k) => Object.prototype.hasOwnProperty.call(r, k)) && typeof r.kind === "string" && r.kind !== "" && timeOk(r.at_ms) && (await fingerprint({ n, at_ms: r.at_ms, kind: r.kind, event: r.event, prev: r.prev })) === r.fp; } catch (e) { contentOk = false; }
+      if (!contentOk) return changed(count, "its content was changed", n);
+      if (!(await signatureOk(publicKey, r.fp, r.sig))) return changed(count, "its signature does not match", n);
+      prev = r.fp;
+    }
+    const head = book.head;
+    if (!isObj(head)) return changed(count, "the book has no signed count");
+    let headFp;
+    try { headFp = await fingerprint({ count: head.count, last_fp: head.last_fp }); } catch (e) { return changed(count, "the book's signed count was changed"); }
+    if (!(await signatureOk(publicKey, headFp, head.sig))) return changed(count, "the book's signed count was changed");
+    if (head.count !== count || head.last_fp !== prev) return changed(count, "receipts are missing from the end of the book", count + 1);
+    if (stamps != null && !(Array.isArray(stamps) && stamps.length === 0)) {
+      if (!Array.isArray(stamps)) return changed(count, WHY_STAMP_BAD);
+      const key = pinnedKey != null ? pinnedKey.toLowerCase() : publicKey;
+      for (const s of stamps) if (!(await stampOk(s, key))) return changed(count, WHY_STAMP_BAD);
+      for (const s of stamps) {
+        if (s.count > count) return changed(count, WHY_SHORT, s.count);
+        if ((s.count >= 1 && receipts[s.count - 1].fp !== s.last_fp) || (s.count === 0 && s.last_fp !== GENESIS))
+          return changed(count, `receipt #${s.count} no longer matches the stamp your device kept`, Math.max(s.count, 1));
+      }
+    }
+    return { intact: true, count };
+  }
+
+  const RESTART_NOTE = "This server makes a new temporary signing key every time it starts. If you restarted it yourself, that is why the key changed: press \u0027Forget what this device trusts\u0027 and run the day again. The hosted demo uses a fixed key, so this never happens there.";
+  function restartNote(bookKey, trustedKey, temporary) {   // words only, never a verdict: verify() is not asked
+    if (temporary !== true || typeof bookKey !== "string" || typeof trustedKey !== "string") return null;
+    return bookKey.toLowerCase() !== trustedKey.toLowerCase() ? RESTART_NOTE : null;
+  }
+
+  const api = { verify, restartNote, canonical, fingerprint, supportsEd25519, codePointCompare, parseStamps };
+  if (typeof module !== "undefined" && module.exports) module.exports = api;
+  Object.freeze(api);                              // nothing can add to or replace the check's functions
+  try {                                            // and nothing can assign a different check to the name later
+    Object.defineProperty(root, "CarbonVerify", { value: api, writable: false, configurable: false, enumerable: true });
+  } catch (e) { /* already defined by an earlier load of this same file */ }
+})(typeof globalThis !== "undefined" ? globalThis : this);
+</script>
+<script>
+(function () {
+  "use strict";
+  const CHECK = window.CarbonVerify;
+  const PUBLISHED = "345c0cf441241146d896623a4dc08bc3a7c0f004c60975e2d072382552a9f6e1";
+  const NO_KEY = "This file has no key from your device, so the check can only compare the book with itself.";
+  const NO_STAMP = "This file has no stamp, so it cannot tell whether the end of the book was rewritten.";
+  const HEX64 = /^[0-9a-fA-F]{64}$/;
+  const $ = (id) => document.getElementById(id);
+  const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+  $("pubKey").textContent = PUBLISHED;
+
+  function line(parent, text, cls) {
+    const p = document.createElement("p");
+    if (cls) p.className = cls;
+    p.textContent = text;
+    parent.appendChild(p);
+    return p;
+  }
+  function say(lines) {                           // lines: [text, class] pairs; text only, never markup
+    const box = $("result");
+    box.textContent = "";
+    lines.forEach(([t, c]) => line(box, t, c));
+  }
+  function stampWord(out) {
+    const el = document.createElement("div");
+    el.className = "stamp " + (out.intact ? "ok" : "bad");
+    el.setAttribute("role", "img");
+    el.textContent = out.intact ? "INTACT" : (out.first_bad == null ? "CHANGED" : "CHANGED AT #" + out.first_bad);
+    el.setAttribute("aria-label", out.intact ? "The book is intact" : "The book was changed");
+    return el;
+  }
+  function showKeys(trusted, bookKey) {
+    const box = $("keys");
+    box.hidden = false;
+    box.textContent = "";
+    const same = (a, b) => typeof a === "string" && typeof b === "string" && a.toLowerCase() === b.toLowerCase();
+    line(box, "The key this download trusts: " + (typeof trusted === "string" && trusted ? trusted : "none"), "mono");
+    line(box, "The key published for the hosted demo: " + PUBLISHED, "mono");
+    line(box, !trusted ? "This download names no trusted key, so there is nothing to compare with the published one."
+      : same(trusted, PUBLISHED) ? "They match: the key this download trusts is the published one."
+      : "They do NOT match. This download trusts a different key than the hosted demo's published key. If this book came from the hosted demo, do not rely on it.",
+      same(trusted, PUBLISHED) || !trusted ? "" : "note");
+    if (typeof bookKey === "string")
+      line(box, same(bookKey, PUBLISHED) ? "The book is signed with the published key." : "The book is signed with a different key than the published one: " + bookKey, same(bookKey, PUBLISHED) ? "" : "mono note");
+  }
+
+  async function checkText(text) {
+    $("keys").hidden = true;
+    let parsed;
+    try { parsed = CHECK.parseStamps(text.replace(/^\ufeff/, "")); }
+    catch (e) { return say([["Could not read the file: it is not a file we can read.", "note"]]); }
+    let book = null, stamps = null, trusted = null;
+    if (isObj(parsed) && !("receipts" in parsed) && isObj(parsed.book)) {
+      book = parsed.book;
+      stamps = parsed.stamps === undefined ? null : parsed.stamps;
+      trusted = parsed.trusted_key === undefined ? null : parsed.trusted_key;
+      if (trusted !== null && !(typeof trusted === "string" && HEX64.test(trusted)))
+        return say([["Could not read the file: the trusted key in the file is not 64 hex characters.", "note"]]);
+    } else if (isObj(parsed)) {
+      book = parsed;
+    } else {
+      return say([["Could not read the file: it is not a carbon-copy book.", "note"]]);
+    }
+    if (!(await CHECK.supportsEd25519()))
+      return say([["This browser cannot check the seals itself (it has no Ed25519). Use a current browser, or the command line: python -m receipts.carbon verify <file>.", "note"]]);
+    let out;
+    try { out = await CHECK.verify(book, stamps, trusted); }
+    catch (e) { out = { intact: false, count: 0, why: "this is not a carbon-copy book we can read" }; }
+    const box = $("result");
+    box.textContent = "";
+    box.appendChild(stampWord(out));
+    line(box, out.intact ? "All " + out.count + " receipts are as they were written." : String(out.why || ""));
+    if (!(typeof trusted === "string" && trusted)) line(box, NO_KEY, "note");
+    if (!(Array.isArray(stamps) && stamps.length)) line(box, NO_STAMP, "note");
+    showKeys(trusted, isObj(book) ? book.public_key : null);
+  }
+
+  function readFile(file) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => checkText(String(reader.result));
+    reader.onerror = () => say([["Could not read the file.", "note"]]);
+    reader.readAsText(file, "utf-8");
+  }
+  const drop = $("drop");
+  $("pick").addEventListener("change", (e) => readFile(e.target.files[0]));
+  ["dragenter", "dragover"].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.add("over"); }));
+  ["dragleave", "drop"].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
+  drop.addEventListener("drop", (e) => readFile(e.dataTransfer.files[0]));
+  window.addEventListener("dragover", (e) => e.preventDefault());       // a file dropped beside the box must not open in the tab
+  window.addEventListener("drop", (e) => e.preventDefault());
+  window.__checkText = checkText;            // for the tests, which run this page's own code under a stand-in page
+})();
+</script>
+</body>
+</html>

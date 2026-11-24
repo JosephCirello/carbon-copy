@@ -714,6 +714,30 @@ def read_check_file(parsed, key=None, stamps=None):
     return parsed, stamps, key
 
 
+NO_KEY_NOTE = "This file has no key from your device, so the check can only compare the book with itself."
+NO_STAMP_NOTE = "This file has no stamp, so it cannot tell whether the end of the book was rewritten."
+
+
+def caveats(trusted_key, stamps) -> list[str]:
+    """What the check had nothing to hold the book against, in the words the page uses: no trusted key, no stamps.
+    Plain code, never a verdict."""
+    out = []
+    if not (isinstance(trusted_key, str) and trusted_key):
+        out.append(NO_KEY_NOTE)
+    if not (isinstance(stamps, list) and stamps):
+        out.append(NO_STAMP_NOTE)
+    return out
+
+
+def read_key_file(path) -> str:
+    """The first 64-hex-character word in a text file (``HOSTED_KEY.txt``), lower-cased. Raises ValueError when there is none."""
+    text = Path(path).read_text(encoding="utf-8-sig")
+    m = re.search(r"(?<![0-9A-Fa-f])[0-9A-Fa-f]{64}(?![0-9A-Fa-f])", text)
+    if not m:
+        raise ValueError("the key file holds no 64-character key")
+    return m.group(0).lower()
+
+
 def _plain(result: dict) -> str:
     """One line in plain words: intact with the count, or the first changed receipt."""
     if result.get("intact"):
@@ -738,9 +762,20 @@ def _main(argv=None) -> int:
     verify_p.add_argument("book", help="path to a book JSON file")
     verify_p.add_argument("--stamps", help="path to a JSON list of the owner's device stamps")
     verify_p.add_argument("--key", help="the public key to trust, 64 hex characters (a book signed with another key is changed)")
+    verify_p.add_argument("--key-file", help="a text file holding the public key to trust (the first 64-hex word in it), such as HOSTED_KEY.txt")
     args = parser.parse_args(argv)
 
     if args.command == "verify":
+        if args.key is not None and args.key_file is not None:
+            print("give --key or --key-file, not both", file=sys.stderr)
+            return 2
+        if args.key_file is not None:
+            try:
+                args.key = read_key_file(args.key_file)
+            except Exception as exc:      # noqa: BLE001  missing, not UTF-8, no key in it: one plain line
+                why = str(exc).splitlines()[0][:200] if isinstance(exc, (OSError, ValueError)) and str(exc) else "it is not a file we can read"
+                print(f"could not read the key file: {why}", file=sys.stderr)
+                return 2
         if args.key is not None and not _HEX64.fullmatch(args.key):
             print("could not use the key: it must be 64 hex characters", file=sys.stderr)
             return 2
@@ -757,6 +792,8 @@ def _main(argv=None) -> int:
         except Exception:  # noqa: BLE001  a book that breaks the check is not intact
             out = {"intact": False, "count": 0, "why": "this is not a carbon-copy book we can read"}
         print(_plain(out))
+        for note in caveats(key, stamps):      # nothing to hold the book against: say so, as the page does
+            print(note)
         return 0 if out.get("intact") else 1
     return 2
 

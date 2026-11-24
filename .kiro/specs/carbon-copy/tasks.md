@@ -123,3 +123,17 @@
   - [x] 15.8 F14: the cheap head on a tap
   - [x] 15.9 README; tests in `tests/` for every fix; the full run; every `scratch_attacks/attack3_*.py` run and reported
   - _Requirements: 15_
+
+
+- [x] 16. A check that does not need to trust us, and honest limits (findings F4, F7, F8, F9, F10, F11, F12, and the book on every recorded run)
+  - [x] 16.1 Spec first: Requirement 16, design section "Task 16", these tasks
+  - [x] 16.2 F8: the page captures and freezes the check; AG Grid is pinned with an integrity hash; `verify.html` built by `tools/build_verify.py`; README hash and Limits
+  - [x] 16.3 F9: `HOSTED_KEY.txt`, `--key-file`, `verify.html` shows the published key beside the trusted one
+  - [x] 16.4 F7: the command line prints the same caveats as the page
+  - [x] 16.5 F10: the one-hour notices on the phone and the Carbon copy tab, the lapsed card, README Limits
+  - [x] 16.6 F4: no visitor without a cookie unless a run starts; eviction spares waiting holds and young runs; 30 new visitors per address per 10 minutes
+  - [x] 16.7 F11: the MCP workspace keeps 200 holds and 500 verdicts, cuts an argument over 64 KB, `receipts_holds` takes a limit
+  - [x] 16.8 F12: policy text size limits with 413
+  - [x] 16.9 The recorded-runs test (`recorded` marker, its own CI step) and the README section "What we measured on the book"
+  - [x] 16.10 Tests in `tests/` for every fix; both runs; every `scratch_attacks/attack3_*.py` run and reported
+  - _Requirements: 16_

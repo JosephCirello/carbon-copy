@@ -21,6 +21,11 @@ from .core import Receipts
 from .paypal import make_paypal
 from .scenarios import load
 
+MAX_HOLDS = 200            # the MCP workspace keeps this many holds in memory (its book keeps everything)
+MAX_VERDICTS = 500         # ... and this many verdicts
+MAX_ARG_BYTES = 64 * 1024  # an argument longer than this is kept as its first 64 KB plus a note of how much was cut
+HOLDS_DEFAULT_LIMIT = 50
+
 _BIZ, _SCNS = load()
 _BY = {s["id"]: s for s in _SCNS}
 
@@ -45,6 +50,47 @@ def workspace() -> dict:
             "expected_legit": [], "bad_outcomes": []}
 
 
+def cut_text(s: str, limit: int = MAX_ARG_BYTES) -> tuple[str, bool]:
+    """``s`` itself, or when its UTF-8 form is over ``limit`` bytes its first ``limit`` bytes plus "(cut: N bytes)"."""
+    raw = s.encode("utf-8", "replace")
+    if len(raw) <= limit:
+        return s, False
+    return raw[:limit].decode("utf-8", "ignore") + f"(cut: {len(raw) - limit} bytes)", True
+
+
+def _cut_value(v, depth: int = 0):
+    """``v`` with every long text inside it cut (see ``cut_text``); returns ``(value, whether anything was cut)``."""
+    if isinstance(v, str):
+        return cut_text(v)
+    if depth > 20:
+        return v, False
+    if isinstance(v, dict):
+        out, hit = {}, False
+        for k, x in v.items():
+            y, h = _cut_value(x, depth + 1)
+            out[k], hit = y, hit or h
+        return out, hit
+    if isinstance(v, (list, tuple)):
+        pairs = [_cut_value(x, depth + 1) for x in v]
+        return [p[0] for p in pairs], any(p[1] for p in pairs)
+    return v, False
+
+
+def trim_history(r: Receipts) -> None:
+    """Keep the workspace's in-memory history small: the last MAX_HOLDS holds and MAX_VERDICTS verdicts, and no
+    argument over 64 KB. The book was written before this runs and keeps everything."""
+    for rec in r.verdicts[-MAX_VERDICTS:]:
+        if "cut" not in rec:
+            rec["args"], rec["cut"] = _cut_value(rec["args"])
+    for h in r.holds:
+        if "cut" not in h:
+            h["args"], h["cut"] = _cut_value(h["args"])
+    if len(r.verdicts) > MAX_VERDICTS:
+        del r.verdicts[:-MAX_VERDICTS]
+    if len(r.holds) > MAX_HOLDS:
+        del r.holds[:-MAX_HOLDS]
+
+
 def build(register=None, on_event=None, signer: Signer | None = None) -> tuple[MCPServer, Receipts]:
     """The MCP server and the Receipts behind its tools. The workspace has its own carbon-copy book, signed by
     ``signer`` (the app passes its one signer; with none, ``CARBON_COPY_KEY`` or a key made in memory), opened by a
@@ -62,6 +108,7 @@ def build(register=None, on_event=None, signer: Signer | None = None) -> tuple[M
         "held_by_receipts did NOT reach PayPal; do not retry it."))
 
     def out(x) -> str:
+        trim_history(r)
         return json.dumps(x, default=str)
 
     @srv.tool(description="The vendor master: each supplier's PayPal email on record and phone on file.")
@@ -116,9 +163,11 @@ def build(register=None, on_event=None, signer: Signer | None = None) -> tuple[M
     def update_vendor_payee(vendor: str, new_paypal_email: str, reason: str = "") -> str:
         return out(r.call("update_vendor_payee", {"vendor": vendor, "new_paypal_email": new_paypal_email, "reason": reason}))
 
-    @srv.tool(description="Receipts: list money moves waiting for the owner, and what was decided.")
-    def receipts_holds() -> str:
-        return out(r.holds)
+    @srv.tool(description="Receipts: list money moves waiting for the owner, and what was decided. Newest first; "
+                          "limit is how many to list (default 50).")
+    def receipts_holds(limit: int = HOLDS_DEFAULT_LIMIT) -> str:
+        n = max(0, min(int(limit), MAX_HOLDS))
+        return out(list(reversed(r.holds))[:n])
 
     @srv.tool(description="Carbon Copy: this workspace's receipt book (public key, signed head, every receipt). Save it and check it "
                           "with `python -m receipts.carbon verify <file>`; it needs no secret.")

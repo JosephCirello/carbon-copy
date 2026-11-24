@@ -162,6 +162,7 @@ def test_the_number_of_visitor_states_is_bounded(web, monkeypatch):
     rules = web.DEFAULT_RULES
     people = [TestClient(web.app) for _ in range(5)]
     for p in people:                                                # saving rules is the cheapest act that creates a state
+        p.get("/api/meta")                                           # load the page first: a visitor with no cookie keeps nothing
         p.post("/api/policy", json={"policy": {**rules["policy"], "split_detection": False}, "english": "", "sources": {}, "compiled_by": "owner"})
     assert len(web.VISITORS) == 3
     assert people[0].get("/api/policy").json()["policy"]["split_detection"] is True      # the oldest was dropped: back to the defaults
