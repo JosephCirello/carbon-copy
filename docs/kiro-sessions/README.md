@@ -1,6 +1,6 @@
 # Kiro build sessions
 
-The team wrote the spec (`.kiro/specs/carbon-copy/`), the steering files and the hooks; the Kiro CLI (`kiro-cli chat --no-interactive --trust-all-tools`) implemented every task from them, one run per task, and Kiro kept the spec current as it went (each time a gap was found, the requirement was written first, then the code). The custom agent `carbon-attacker` was run three times against the build (the third run resumed once after a network error), and its findings became tasks 11, 12 and 15 to 18. A few configuration fixes were made by hand, each in its own commit: the package list (`requirements.txt`), the hosting recipe (`Dockerfile`, `render.yaml`), the README's demo link and run commands, and the key scanner's skip list. Each file here is one Kiro run: the instructions exactly as given, then the steps Kiro narrated as it worked and its own end report, copied from the run's log with only personal folder paths removed. Tool-call progress lines are left out. Between runs a person checked the result (the tests, the attacker's reproductions, a click-through in the running app) and committed it; the commit messages say which commit each run became.
+The team wrote the spec (`.kiro/specs/carbon-copy/`), the steering files and the hooks; the Kiro CLI (`kiro-cli chat --no-interactive --trust-all-tools`) implemented every task from them, one run per task, and Kiro kept the spec current as it went (each time a gap was found, the requirement was written first, then the code). The custom agent `carbon-attacker` was run twice against the build, and its findings became tasks 11 and 12. A few configuration fixes were made by hand, each in its own commit: the package list (`requirements.txt`), the hosting recipe (`Dockerfile`, `render.yaml`), the README's demo link and run commands, and the key scanner's skip list. Each file here is one Kiro run: the instructions exactly as given, then the steps Kiro narrated as it worked and its own end report, copied from the run's log with only personal folder paths removed. Tool-call progress lines are left out. Between runs a person checked the result (the tests, the attacker's reproductions, a click-through in the running app) and committed it; the commit messages say which commit each run became.
 
 - [task 1 (the book and the check)](01_task1_the_book_and_the_check.md)
 - [task 2 (signed count, property tests)](02_task2_signed_count_and_property_tests.md)
@@ -23,3 +23,8 @@ The team wrote the spec (`.kiro/specs/carbon-copy/`), the steering files and the
 - [task 16 (a check that does not need to trust us, and honest limits)](19_task16_a_check_that_does_not_trust_us.md)
 - [task 17 (the two findings task 16 left open)](20_task17_the_last_two_findings.md)
 - [task 18 (keep a run for an hour after the owner's last tap)](21_task18_an_hour_after_the_last_tap.md)
+- [task 19 (the README in line with tasks 14 to 18)](22_task19_readme_in_line.md)
+- [the custom agent carbon-attacker, fourth run (on tasks 15 to 18)](23_agent_carbon_attacker_fourth_run.md)
+- [task 20 (a test that failed only on GitHub's Linux runner)](24_task20_a_test_that_failed_on_linux.md)
+- [task 21 (the fourth attack round's twelve findings)](25_task21_the_fourth_rounds_twelve_findings.md)
+- [task 22 (rules saved before a run; one lock for the tap and the agent)](26_task22_signed_cookie_and_one_lock.md)
