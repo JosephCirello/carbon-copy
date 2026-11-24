@@ -130,8 +130,8 @@ def test_unticking_a_rule_changes_only_that_visitors_runs(clients):
     a, b = clients
     rules = a.get("/api/policy").json()
     assert rules["compiled_by"] == "defaults" and rules["policy"]["hold_payment_in_flight"] is True
-    assert a.post("/api/policy", json={"policy": rules["policy"], "english": "", "sources": {}, "compiled_by": "owner"}).status_code == 400   # no run yet: nothing is kept
-    run_day(a, "observe")                                           # a run starts (nothing checking, so nothing waits): now rules can be kept
+    assert a.post("/api/policy", json={"policy": rules["policy"], "english": "", "sources": {}, "compiled_by": "owner"}).status_code == 200   # task 22: the page's signed cookie is enough, no run needed
+    run_day(a, "observe")                                           # a run starts (nothing checking, so nothing waits)
     saved = a.post("/api/policy", json={"policy": {**rules["policy"], "hold_payment_in_flight": False},
                                         "english": rules["english"], "sources": {}, "compiled_by": "owner"}).json()
     assert saved["policy"]["hold_payment_in_flight"] is False

@@ -607,13 +607,12 @@ def test_a_made_up_cookie_makes_no_visitor_and_a_policy_request_is_refused(web, 
     assert not web.VISITORS and not web._NEW_BY_ADDRESS
 
 
-def test_a_cookie_the_server_issued_still_makes_no_visitor_until_a_run_starts(web, client):
+def test_a_cookie_the_server_issued_makes_no_visitor_until_the_visitor_acts(web, client):
     client.get("/api/meta")
-    assert web.VISITOR_COOKIE in client.cookies
+    assert web.VISITOR_COOKIE in client.cookies and not web.VISITORS         # loading the page creates nothing
     body = {"policy": web.DEFAULT_RULES["policy"], "english": "", "sources": {}, "compiled_by": "owner"}
-    assert client.post("/api/policy", json=body).status_code == 400 and not web.VISITORS
-    assert start_run(client, "observe")[0].status_code == 200
-    assert client.post("/api/policy", json=body).status_code == 200 and len(web.VISITORS) == 1
+    assert client.post("/api/policy", json=body).status_code == 200 and len(web.VISITORS) == 1      # task 22: a signed cookie may save rules before any run
+    assert start_run(client, "observe")[0].status_code == 200 and len(web.VISITORS) == 1
 
 
 def test_no_request_that_does_not_start_a_run_makes_a_visitor(web, client):
@@ -676,8 +675,8 @@ def test_the_spec_has_requirement_19_task_21_and_the_readme_counts_are_true():
     assert "## Task 21: the fourth attacker round's twelve findings" in (spec / "design.md").read_text(encoding="utf-8")
     tasks = (spec / "tasks.md").read_text(encoding="utf-8")
     assert "- [x] 21. The fourth attacker round's twelve findings" in tasks
-    assert len(re.findall(r"^- \[[x ]\] \d+\. ", tasks, re.M)) == 21
-    assert "(19 requirements)" in README and "tasks 1 to 21" in README and "seventeen times" in README
+    assert len(re.findall(r"^- \[[x ]\] \d+\. ", tasks, re.M)) == 22          # task 22 added the 22nd task
+    assert "(19 requirements)" in README and "tasks 1 to 22" in README and "seventeen times" in README
     assert re.search(r"^17\. \*\*The fourth attacker run's twelve findings\.\*\*", README, re.M)
     assert "fourth run twelve" in README and "not in the session records yet" in README
     assert "(21 runs:" in README                       # no record of the fourth run was invented

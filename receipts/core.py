@@ -44,7 +44,10 @@ class Receipts:
         self.report_check: dict | None = None
         self.on_event = on_event or (lambda e: None)
         self._hold_codes: dict[str, set] = {}   # hold id -> the finding codes it was held for (the tap's second look compares)
-        self._tap_lock = threading.Lock()    # approve and decline: one tap at a time on this run, so a hold is decided once
+        # ONE lock per run, taken by the agent's money moves (the check plus the forward in ``call``) and by the owner's approve
+        # (the second look plus the forward) and decline: neither can happen in the other's gap, and a hold is decided once.
+        # Re-entrant, because an event handler that runs inside ``call`` may itself tap.
+        self.run_lock = threading.RLock()
         self.carbon = carbon                 # a CarbonCopy: append-only, signed receipt book; None leaves Receipts unchanged
 
     def emit(self, **e):
@@ -62,6 +65,14 @@ class Receipts:
 
     # ---- the one door --------------------------------------------------------------------
     def call(self, tool: str, args: dict, step_text: str = "") -> dict:
+        """The agent's one door. A money move holds the run's lock from its check to its forward, so the owner's tap on a
+        hold for the same bill cannot slip in between (and the other way round); a read takes no lock."""
+        if tool in MONEY_TOOLS:
+            with self.run_lock:
+                return self._call(tool, args, step_text)
+        return self._call(tool, args, step_text)
+
+    def _call(self, tool: str, args: dict, step_text: str = "") -> dict:
         speech = " ".join(str(args.get(k, "")) for k in SPEECH_FIELDS.get(tool, ()))
         if speech.strip():
             m = self.note_words(speech, where=f"inside {tool}")
@@ -190,7 +201,7 @@ class Receipts:
         ("sent"). A forward that raised before anything left (the client refused its own arguments) is sealed "not_sent".
         Any other failure may have been sent: it is sealed "no_answer", PayPal's records are looked up, and what they
         show is sealed ("sent" with PayPal's id, or "not_found"). The answer carries the error and the stamp, never an exception."""
-        with self._tap_lock:
+        with self.run_lock:
             h = next((h for h in self.holds if h["id"] == hold_id and h["status"] == "WAITING"), None)
             if not h:
                 return {"error": "no such waiting hold"}
@@ -326,7 +337,7 @@ class Receipts:
         return None
 
     def decline(self, hold_id: str) -> dict:
-        with self._tap_lock:
+        with self.run_lock:
             h = next((h for h in self.holds if h["id"] == hold_id and h["status"] == "WAITING"), None)
             if not h:
                 return {"error": "no such waiting hold"}

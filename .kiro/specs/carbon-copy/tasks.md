@@ -172,3 +172,10 @@
   - [x] 21.6 Finding 12: a payout or refund of zero or less is BLOCKED; no recorded verdict changes
   - [x] 21.7 `verify.html` rebuilt, README hash, Limits and counts; tests in `tests/` for every fix; both runs; every `scratch_attacks/attack4_*.py` run and reported
   - _Requirements: 19_
+
+- [x] 22. Saving rules before a run, and the instant between the tap's look and its send (amends Requirement 19, items 11 and 13)
+  - [x] 22.1 Spec first: Requirement 19 amended (item 11 reworded, item 13 added), design section "Task 22", this task
+  - [x] 22.2 A signed visitor cookie (random id plus HMAC; key from start-up or derived from CARBON_COPY_KEY text with a fixed label): the page load creates nothing, a valid signed cookie may create its visitor on first use, counted against the per-address limit; a made-up cookie is no cookie
+  - [x] 22.3 One per-run lock (un_lock) for the agent's check plus forward in Receipts.call and the owner's re-check plus forward in pprove; the same lock covers MCP tool calls and phone taps on MCP holds
+  - [x] 22.4 README: Limits line removed, counts; tests in 	ests/test_carbon_round7.py; both runs; ttack4_visitor_cookie.py and ttack4_tap.py run and reported
+  - _Requirements: 19_

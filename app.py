@@ -15,7 +15,10 @@ another's. The recorded runs and the book built from them are read-only and shar
 """
 from __future__ import annotations
 
+import base64
 import copy
+import hashlib
+import hmac
 import json
 import os
 import queue
@@ -108,6 +111,29 @@ MAX_ENGLISH_CHARS = 20_000          # the owner's rules in words
 MAX_SOURCES = 200                   # quotes kept beside the rules
 MAX_SOURCE_CHARS = 2_000            # one quote
 _VISITOR_ID_OK = re.compile(r"^[A-Za-z0-9_-]{24,64}$")
+_COOKIE_LABEL = b"carbon-copy visitor cookie v1"
+
+
+def _cookie_key() -> bytes:
+    """The key that signs visitor cookies. From the text of CARBON_COPY_KEY with a fixed label (so a restart of the hosted
+    demo keeps accepting the cookies it issued), else made in memory. Never the signing key itself, never written anywhere."""
+    text = os.environ.get("CARBON_COPY_KEY", "")
+    return hashlib.sha256(_COOKIE_LABEL + b"\0" + text.encode("utf-8")).digest() if text else secrets.token_bytes(32)
+
+
+COOKIE_KEY = _cookie_key()
+
+
+def sign_visitor_id(vid: str) -> str:
+    """``<id>.<tag>``: the id and an HMAC-SHA256 over it, as URL-safe base64 without padding."""
+    tag = hmac.new(COOKIE_KEY, vid.encode("ascii"), hashlib.sha256).digest()
+    return vid + "." + base64.urlsafe_b64encode(tag).decode("ascii").rstrip("=")
+
+
+def valid_visitor_cookie(value: str) -> bool:
+    """True only for a cookie this server signed (a made-up, unsigned or wrongly signed one is no cookie at all)."""
+    vid, dot, _tag = value.partition(".")
+    return bool(dot) and bool(_VISITOR_ID_OK.match(vid)) and hmac.compare_digest(sign_visitor_id(vid).encode("ascii"), value.encode("utf-8"))
 
 
 class Visitor:
@@ -127,7 +153,7 @@ _VISITORS_LOCK = threading.RLock()
 
 class VisitorCookie:
     """Plain ASGI middleware (it never buffers, so the event streams pass straight through): reads the visitor
-    id from the cookie, or makes a new random one and sets it on the response. HttpOnly, SameSite=Lax, and
+    id from the cookie when it carries a valid signature, or makes a new random one, signs it and sets it on the response. It creates no visitor. HttpOnly, SameSite=Lax, and
     Secure when the page was served over https (directly, or behind a proxy that says so)."""
 
     def __init__(self, inner):
@@ -140,11 +166,11 @@ class VisitorCookie:
         vid = None
         for part in headers.get("cookie", "").split(";"):
             name, _, value = part.strip().partition("=")
-            if name == VISITOR_COOKIE and _VISITOR_ID_OK.match(value):
+            if name == VISITOR_COOKIE and valid_visitor_cookie(value):
                 vid = value
         issued = vid is None
         if issued:
-            vid = secrets.token_urlsafe(32)
+            vid = sign_visitor_id(secrets.token_urlsafe(32))
         scope[VISITOR_SCOPE_KEY] = vid
         scope[ISSUED_SCOPE_KEY] = issued
         if not issued:
@@ -293,10 +319,11 @@ def _make_room(now: float, keep: str | None = None) -> None:
         VISITORS.pop(victim, None)
 
 
-def _visitor(request: Request, create: bool = False, may_start: bool = True) -> Visitor | None:
+def _visitor(request: Request, create: bool = False, signed_only: bool = False) -> Visitor | None:
     """This visitor's state. Reading never creates one (a visitor who has done nothing costs no memory);
-    acting does. ``may_start`` is False for a request that does not start a run: it creates nothing, with or without
-    a cookie (a cookie the server never issued is just a made-up name). Idle visitors expire, and past MAX_VISITORS room is made (see ``_make_room``)."""
+    acting does, counted against the per-address limit. ``signed_only`` is for a request that is not a run (a rules save):
+    it creates the visitor only when the request CAME with a valid signed cookie, not when the cookie was issued on this
+    very request (the page was never loaded). A made-up or unsigned cookie is no cookie. Idle visitors expire, and past MAX_VISITORS room is made (see ``_make_room``)."""
     vid = request.scope.get(VISITOR_SCOPE_KEY)
     now = time.time()
     with _VISITORS_LOCK:
@@ -304,7 +331,7 @@ def _visitor(request: Request, create: bool = False, may_start: bool = True) -> 
             VISITORS.pop(k, None)           # idle too long, unless a payment is still waiting for them (kept until its 24 hours are up)
         v = VISITORS.get(vid) if vid else None
         if v is None:
-            if not create or not may_start:      # only a request that starts a run makes a visitor, cookie or no cookie
+            if not create or (signed_only and request.scope.get(ISSUED_SCOPE_KEY, True)):
                 return None
             _admit_new_visitor(request, now)
             v = Visitor()
@@ -386,9 +413,9 @@ def set_policy(body: PolicyIn, request: Request):
         raise HTTPException(413, f"Those rules are too long to keep: the most is {MAX_ENGLISH_CHARS:,} characters.")
     if len(body.sources) > MAX_SOURCES or any(len(str(k)) > MAX_SOURCE_CHARS or len(v if isinstance(v, str) else json.dumps(v, default=str)) > MAX_SOURCE_CHARS for k, v in body.sources.items()):
         raise HTTPException(413, f"Those quotes are too long to keep: at most {MAX_SOURCES} of them, each up to {MAX_SOURCE_CHARS:,} characters.")
-    visitor = _visitor(request, create=True, may_start=False)
+    visitor = _visitor(request, create=True, signed_only=True)
     if visitor is None:
-        raise HTTPException(400, "Please load the page first and start a run (Run the day), then save your rules: nothing is kept for someone who has not started a run.")
+        raise HTTPException(400, "Please load the page first, then save your rules: nothing is kept for a browser that has not opened the page.")
     rules = visitor.rules
     rules.update({"policy": _validate(body.policy), "english": body.english or rules["english"],
                   "sources": body.sources, "compiled_by": body.compiled_by})

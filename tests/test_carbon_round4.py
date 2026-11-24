@@ -321,9 +321,9 @@ def test_f4_a_policy_request_with_no_cookie_keeps_nothing(web, fresh):
     res = c.post("/api/policy", json=policy_body(web))
     assert res.status_code == 400 and "load the page first" in res.json()["detail"].lower()
     assert not web.VISITORS and not web._NEW_BY_ADDRESS
-    assert c.post("/api/policy", json=policy_body(web)).status_code == 400      # its cookie came back, but no run has started: still nothing kept
-    assert not web.VISITORS and not web._NEW_BY_ADDRESS
-    assert observe_run(web, c).status_code == 200                               # a run starts: now there is a visitor
+    assert c.post("/api/policy", json=policy_body(web)).status_code == 200      # task 22: its cookie came back SIGNED, so the save may make the visitor, with no run
+    assert len(web.VISITORS) == 1 and len(web._NEW_BY_ADDRESS) == 1
+    assert observe_run(web, c).status_code == 200                               # a run starts: the same visitor
     assert len(web.VISITORS) == 1 and c.post("/api/policy", json=policy_body(web)).status_code == 200
 
 
