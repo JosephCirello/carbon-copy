@@ -148,5 +148,12 @@
 - [x] 18. Keep a run for an hour after the owner's last tap
   - [x] 18.1 Spec first: Requirement 18, design section "Task 18", this task
   - [x] 18.2 A tap that returns a stamp sets the run's last-activity time; the sentence on the phone, the Carbon copy tab and README Limits
-  - [x] 18.3 Tests in 	ests/test_carbon_round5.py with the clock moved; both runs; ttack3_expiry.py re-run and reported
+  - [x] 18.3 Tests in `tests/test_carbon_round5.py` with the clock moved; both runs; `attack3_expiry.py` re-run and reported
   - _Requirements: 18_
+
+- [x] 19. The README's "How Kiro built it" in line with tasks 14 to 18 (documentation only)
+  - [x] 19.1 Every count in the section read from the spec and the session records: requirements, tasks, runs of the attacker, session records, spec changes
+  - [x] 19.2 The task list extended to 19 and the spec changes since the eighth written up
+  - [x] 19.3 The attacker's three runs described with the numbers in its own reports
+  - [x] 19.4 The README tests that pin the counts updated; the full run
+  - _Requirements: none (documentation, kept true as task 6 did)_
