@@ -16,3 +16,4 @@ The team wrote the spec (`.kiro/specs/carbon-copy/`), the steering files and the
 - [the custom agent carbon-attacker, second run (MCP loaded)](12_agent_carbon_attacker_second_run.md)
 - [task 12 (the attacker's second round)](13_task12_the_attackers_second_round.md)
 - [task 13 (a honest book after a local restart)](14_task13_honest_book_after_a_local_restart.md)
+- [task 14 (Try to change one is checked in the browser)](15_task14_change_one_checked_in_the_browser.md)

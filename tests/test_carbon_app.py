@@ -421,7 +421,7 @@ def test_readme_is_in_line_with_task_10():
     assert "Kiroween 2026 · Resurrection" in README and "Session records:** [docs/kiro-sessions/](docs/kiro-sessions/README.md)" in README
     assert (ROOT / "docs" / "kiro-sessions" / "README.md").exists()
     assert "always-on plan" in README and "free plan" not in README
-    assert "after each save" in README and "tasks 1 to 13" in README.lower()
+    assert "after each save" in README and "tasks 1 to 14" in README.lower()
     section = README[README.index("## How Kiro built it"):README.index("## Limits we know about")]
     for word in ("Kiro CLI, headless", "Spec-driven", "Steering", "Hooks", "Property-based", "MCP", "Custom agent", "Powers", "None were used"):
         assert word in section, word
@@ -554,9 +554,38 @@ def test_spec_carries_requirement_11_and_task_11():
 
 def test_readme_is_in_line_with_task_11():
     assert "Amounts that are not whole numbers are sealed as text, so the book shows the value, not whether the AI wrote it as a number or as text." in README
-    assert "tasks 1 to 13" in README and "13 requirements" in README
+    assert "tasks 1 to 14" in README and "14 requirements" in README
     section = README[README.index("## How Kiro built it"):README.index("## Limits we know about")]
     assert "kiro-cli mcp list" in section and "Mode 'carbon-attacker' not found" in section
     assert "aren't available to me" in section
     assert '"at": at' not in README and '"at_ms": at_ms' in README
     assert not re.search(r"[0-9a-fA-F]{64}", README)
+
+
+def test_tamper_returns_the_changed_copy_and_it_fails_the_check_for_the_reason_given(client):
+    from receipts.carbon import verify
+    sid = replay(client)
+    hold = next(h for h in client.get("/api/holds").json() if h["status"] == "WAITING")
+    assert client.post("/api/decline", json={"session": hold["session"], "hold_id": hold["id"]}).status_code == 200
+    before = client.get("/api/carbon", params={"sid": hold["session"]}).json()
+    t = client.post("/api/carbon/tamper", params={"sid": hold["session"]}).json()
+    assert {"n", "field", "before", "after", "say", "result", "book"} <= set(t)
+    assert set(t["book"]) == {"public_key", "head", "receipts"}
+    assert t["book"]["public_key"] == before["public_key"]
+    n = t["n"]
+    assert before["receipts"][n - 1]["kind"] == "owner" and before["receipts"][n - 1]["event"]["action"] == "declined"
+    assert t["book"]["receipts"][n - 1]["event"]["action"] == "approved"
+    changed = [i + 1 for i, (a, b) in enumerate(zip(before["receipts"], t["book"]["receipts"])) if a != b]
+    assert changed == [n] and len(t["book"]["receipts"]) == len(before["receipts"])
+    again = verify(t["book"])
+    assert again == t["result"] and again["intact"] is False and again["first_bad"] == n
+    after = client.get("/api/carbon", params={"sid": hold["session"]}).json()
+    assert after["receipts"] == before["receipts"]
+    assert client.post("/api/carbon/verify", json={"book": after, "stamps": []}).json()["intact"] is True
+
+
+def test_the_page_checks_the_changed_copy_on_the_device_and_does_not_show_the_servers_answer():
+    js = (Path(__file__).resolve().parent.parent / "static" / "app.js").read_text(encoding="utf-8")
+    body = js[js.index('$("#ccTamper").addEventListener'):js.index('$("#ccForge").addEventListener')]
+    assert "checkOnDevice(t.book)" in body and "ccWhere(got.where)" in body and "ccStamp(got.out)" in body
+    assert "Checked by the server" not in body and "t.result" not in body

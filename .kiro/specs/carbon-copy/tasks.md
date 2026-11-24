@@ -102,3 +102,11 @@
   - [x] 13.3 README "Try it": set a fixed key
   - [x] 13.4 Tests for a temporary and a fixed key; the full run
   - _Requirements: 13_
+
+- [x] 14. "Try to change one" is checked in the browser too
+  - [x] 14.1 Spec first: Requirement 14, design section "Task 14", these tasks
+  - [x] 14.2 `tamper_demo` and `/api/carbon/tamper` return the changed copy as `book`
+  - [x] 14.3 The page checks it with `checkOnDevice()` and shows "Checked in your browser"
+  - [x] 14.4 Tests: endpoint, exact change, same reason, real book intact, node parity; the full run
+  - [x] 14.5 README: which buttons are checked where
+  - _Requirements: 14_

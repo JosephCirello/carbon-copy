@@ -655,9 +655,13 @@ $("#ccTamper").addEventListener("click", async () => {
   if (!(await refreshBook())) { $("#ccResult").textContent = NO_FRESH; return; }
   const res = await fetch("/api/carbon/tamper" + (CC.session ? "?sid=" + encodeURIComponent(CC.session) + "&mode=" + encodeURIComponent(CC.mode || "enforce") : ""), { method: "POST" });
   if (!res.ok) { $("#ccResult").textContent = "There is nothing to change yet."; return; }
-  const t = await res.json(), r = t.result || {};
-  const what = t.n == null ? "" : `<p class="cc-say">${esc(t.say || `We changed receipt #${t.n} from ${ccFmt(t.field, t.before)} to ${ccFmt(t.field, t.after)} in a copy of the book.`)} The real book was not touched.</p>`;
-  $("#ccResult").innerHTML = what + ccStamp(r) + `<p class="cc-say">${esc(r.why || "")}</p><p class="cc-where warn">Checked by the server</p>`;
+  const t = await res.json();
+  if (!t.book) { $("#ccResult").textContent = "There is nothing to change yet."; return; }
+  let got = null;                                // the changed copy is checked on this device, not by the server
+  try { got = await checkOnDevice(t.book); } catch { got = null; }
+  if (!got) { $("#ccResult").textContent = "The check did not run. Try again."; return; }
+  const what = `<p class="cc-say">${esc(t.say || `We changed receipt #${t.n} from ${ccFmt(t.field, t.before)} to ${ccFmt(t.field, t.after)} in a copy of the book.`)} The real book was not touched.</p>`;
+  $("#ccResult").innerHTML = what + ccStamp(got.out) + ccNotes() + `<p class="cc-say">${got.out.intact ? "This device did not catch it, because it holds no stamp that reaches the book. That is the limit described in the README." : esc(got.out.why || "")}</p>` + ccWhere(got.where);
 });
 $("#ccForge").addEventListener("click", async () => {
   if (!CC) return;

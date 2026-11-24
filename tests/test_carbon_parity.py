@@ -221,3 +221,29 @@ def test_an_honest_book_with_a_huge_event_time_reads_intact_in_the_browser_too(t
     book = json.loads(json.dumps(carbon.book(), allow_nan=False))
     out = run_node(tmp_path, [{"book": book, "stamps": [carbon.stamp()], "key": signer.public_key_hex}])[0]
     assert out == {"intact": True, "count": 5} == verify(book, [carbon.stamp()], signer.public_key_hex)
+
+
+# ---- task 14: "Try to change one" is checked in the browser, so both checks must agree on the changed copy -------------
+
+def test_the_browser_and_python_agree_on_the_changed_copy_of_marias_book(tmp_path):
+    from receipts.carbon import tamper_demo
+    signer = Signer(Ed25519PrivateKey.generate())
+    carbon = CarbonCopy(signer)
+    carbon.append("run", {"mode": "enforce", "source": "recorded", "scenario": "S14", "model": "m", "title": "t",
+                          "started": "2026-01-01T00:00:00Z", "t": 1795462000.0})
+    carbon.append("verdict", {"t": 1795462000.001, "id": "h1", "amount": 1836.0, "verdict": "HOLD"})
+    carbon.append("owner", {"t": 1795462000.002, "action": "declined", "hold_id": "h1"})
+    carbon.append("note", {"t": 1795462000.003, "x": 1})
+    real = carbon.book()
+    key, stamps = signer.public_key_hex, [carbon.stamp()]
+    demo = tamper_demo(real)
+    page_copy = json.loads(json.dumps(demo["book"], allow_nan=False))        # what the page receives
+    assert demo["n"] == 3 and demo["field"] == "action" and demo["after"] == "approved"
+    got = run_node(tmp_path, [{"book": page_copy, "stamps": stamps, "key": key},
+                              {"book": page_copy, "stamps": [], "key": None},
+                              {"book": json.loads(json.dumps(real)), "stamps": stamps, "key": key}])
+    want = verify(page_copy, stamps, expected_key=key)
+    assert got[0] == want and want["intact"] is False and want["first_bad"] == 3
+    assert got[0]["why"] == demo["result"]["why"] == "its content was changed"       # the server's own reason, word for word
+    assert got[1] == demo["result"]                                                  # no stamps, no key: same as the server's run
+    assert got[2] == {"intact": True, "count": len(real["receipts"])}               # the real book is still intact

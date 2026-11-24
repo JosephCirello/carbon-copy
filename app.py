@@ -594,7 +594,8 @@ def carbon_verify_book(body: VerifyIn):
 
 @app.post("/api/carbon/tamper")
 def carbon_tamper(request: Request, sid: str | None = None, mode: str | None = None):
-    """Change one value in a COPY of the book and show the check catching it. The real book is never touched."""
+    """Change one value in a COPY of the book. Returns the changed copy (``book``) for the browser to check, and the
+    server's own verdict on it (``result``) for the command line and tests. The real book is never touched."""
     _check_mode(mode)
     s = _carbon_session(request, sid, mode)
     if s is None:

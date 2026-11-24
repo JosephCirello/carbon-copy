@@ -136,3 +136,14 @@ A human click-through found that on a machine with no `CARBON_COPY_KEY`, running
 4. THE FOOTER STAYS (D4). The footer keeps "Signing key: temporary (changes on restart)".
 5. THE README SAYS HOW TO AVOID IT (D5). "Try it" SHALL show, before the run commands, how to set a fixed `CARBON_COPY_KEY` (PowerShell and macOS/Linux) and one sentence on why.
 6. TESTS (D6). A test SHALL cover the function that decides (`restart_note` in `receipts/carbon.py` and its twin in `static/carbon_verify.js`) and the `/api/carbon/key` values it reads, for a temporary and a fixed key.
+
+
+### Requirement 14: "Try to change one" is checked in the browser too
+
+On the Carbon copy tab, "Check the book" and "Try to forge a new book" were checked in the browser and said "Checked in your browser". "Try to change one" printed the server's answer under "Checked by the server", which contradicts the claim that the check runs on the owner's side.
+
+1. THE ENDPOINT RETURNS THE COPY (E1). `POST /api/carbon/tamper` SHALL return, besides `n`, `field`, `before`, `after`, `say` and `result`, the changed copy as `book` (`public_key`, `head`, `receipts`, the shape `/api/carbon/forge` returns). The real book SHALL never be touched.
+2. THE BROWSER CHECKS IT (E2). THE page SHALL run the changed copy through `checkOnDevice()` and show that result and `ccWhere(...)`, so it says "Checked in your browser". Only a browser with no Ed25519 SHALL fall back to the server (Requirement 9.8). The server's `result` SHALL stay in the response for the command line and tests, and the screen SHALL NOT show it.
+3. THE VERDICT STAYS (E3). For Maya's book the verdict SHALL stay CHANGED AT #N, N being the receipt holding her decline. The browser and Python SHALL give the same `intact`, `first_bad` and `why` for the changed copy.
+4. TESTS (E4). A test SHALL cover the endpoint returning the book, the book being changed exactly at `n` and failing `verify()` with the response's own reason, the real book still intact afterwards, and the node parity test over the changed copy.
+5. README (E5). THE README SHALL say which buttons are checked where.

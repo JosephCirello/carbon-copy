@@ -310,3 +310,8 @@ The prompt says every command sets `PAYPAL_MODE=standin`, never starts the sandb
 ## Task 13: an honest book after a local restart
 
 `restart_note(book_key, trusted_key, temporary)` in `receipts/carbon.py` is plain code with no model: it returns the explanation text (`RESTART_NOTE`) only when `temporary is True`, `trusted_key` is set and the two keys differ (compared lower-cased), else `None`. `static/carbon_verify.js` carries the same function (`restartNote`) and the same text. `verify()` is not changed, so the verdict is the same as before. On "Check the book" the page reads `/api/carbon/key` (`temporary`) and puts the note under the verdict; if that request fails it shows nothing. The footer is unchanged. The README's "Try it" gains a fixed-key line. Tests are in `tests/test_carbon_restart.py`.
+
+
+## Task 14: "Try to change one" is checked in the browser too
+
+`tamper_demo()` in `receipts/carbon.py` now also returns `book`, the deep copy it changed (None for an empty book); `/api/carbon/tamper` passes it through with the fields it returned before. The server's `result` stays for the command line and tests. The `#ccTamper` handler in `static/app.js` runs `t.book` through `checkOnDevice()` (the device's stamps and pinned key, the browser's SHA-256 and Ed25519) and shows `ccStamp(got.out)`, the reason and `ccWhere(got.where)`, as the forge button does; with no Ed25519 `checkOnDevice` falls back to the server as before. The changed copy keeps every old signature, so both checks stop at the same receipt with "its content was changed"; a parity test over the copy keeps it so. Nothing in `verify()` changed.

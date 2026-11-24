@@ -647,10 +647,12 @@ def tamper_demo(book: dict, n: int | None = None) -> dict:
     declined). With no owner action it changes the amount of the latest money move,
     else another field (or the receipt's ``kind`` when the event is empty). Returns the
     receipt number, the field changed, the before and after values, the result and
-    ``say``, the change in plain words. The book passed in is never modified.
+    ``say``, the change in plain words, and ``book``, the changed copy itself (public_key, head, receipts, the
+    same shape :func:`forge_demo` returns; None for an empty book) so the owner's device can check it too. The
+    book passed in is never modified.
     """
     work, what = _change_one(book, n)
-    return {**what, "result": verify(work)}
+    return {**what, "result": verify(work), "book": None if what["n"] is None else work}
 
 
 RUN_MODES = ("enforce", "observe")
