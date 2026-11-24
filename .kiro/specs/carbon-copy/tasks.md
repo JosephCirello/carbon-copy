@@ -157,3 +157,8 @@
   - [x] 19.3 The attacker's three runs described with the numbers in its own reports
   - [x] 19.4 The README tests that pin the counts updated; the full run
   - _Requirements: none (documentation, kept true as task 6 did)_
+
+- [x] 20. One test that passed on Windows and failed on GitHub's Linux runner (F13; run 45415864404)
+  - [x] 20.1 `test_f13_when_even_the_cleaned_form_fails_a_placeholder_is_sent` used a 3,000-deep event and relied on `json.dumps` raising RecursionError, which depends on the platform's recursion limit; it now uses an event holding `float("nan")`, which the first `json.dumps(..., allow_nan=False)` refuses everywhere, with `safe_json` patched to fail
+  - [x] 20.2 The other tests read for a RecursionError, path separator, CRLF, Windows-only command or time zone: none needed a change (`mcp.json` paths and `render.yaml` line endings are already normalised); `app.py` unchanged
+  - _Requirements: 15_

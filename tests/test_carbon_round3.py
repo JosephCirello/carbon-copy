@@ -378,7 +378,8 @@ def test_f13_when_even_the_cleaned_form_fails_a_placeholder_is_sent(web, monkeyp
     def broken(_x):
         raise RecursionError
     monkeypatch.setattr(web, "safe_json", broken)
-    out = json.loads(web._data({"type": "call", "args": _deep(3000), "head": {"count": 3}}))
+    # NaN is refused by the first json.dumps (allow_nan=False) on every platform; no recursion limit is involved.
+    out = json.loads(web._data({"type": "call", "amount": float("nan"), "head": {"count": 3}}))
     assert out["type"] == "unshown" and "msg" in out
 
 
