@@ -267,3 +267,41 @@ The prompt lists A1 to A6 in plain words as already fixed and says to look for n
 
 ### Tests
 `tests/test_carbon.py` holds the unit and property tests for A1 to A6 (every spelling of a signature, every key form, extra keys by property, event times by property). `tests/test_carbon_parity.py` builds each attack once and runs it through both checks under node, requiring the same answer and *changed* for every attack. `tests/test_carbon_app.py` holds the checks of the spec, README, agent file and the MCP start-up.
+
+
+## Task 12: what our own attacker found, second round (C1 to C8)
+
+Nothing here changes what Receipts decides (`receipts/measure.py`, `receipts/rules.py`, `results/` and the scoring in `core.py` stay as they are).
+
+### C1. The download reads on the command line
+Cause: the page writes `{"book", "stamps", "trusted_key"}`; the command read the file as a book and found no `receipts`.
+Fix: `read_check_file(parsed)` in `receipts/carbon.py` returns `(book, stamps, key)`. A dict with a `book` object and no `receipts` of its own is the download shape; anything else is a bare book. The command uses the download's `stamps` and `trusted_key` unless `--stamps` or `--key` is given. A `trusted_key` that is not 64 hex characters is exit 2 (same rule as `--key`). A test builds the file the way `bookParts()` in `static/app.js` builds it.
+
+### C2. No traceback
+Cause: `json.loads` on a file nested 200,000 levels raises `RecursionError`, which is not a `ValueError`.
+Fix: reading and parsing either file catches every `Exception` and prints one line, `could not read the file: <name> is not a book we can read`, exit 2.
+
+### C3. PayPal said no
+Cause: `ccSentence` said "It went to PayPal" for every approval and "Sent to PayPal" for every PayPal receipt, whatever the sealed result held.
+Fix: the sentence function reads the sealed `result`. With an `error` (a text, or an object with `message`, or `details[0].issue`) it says "PayPal refused it: <reason>". Known codes have plain words (`REFUND_AMOUNT_EXCEEDED` is "the refund is more than what is left on that payment"); an unknown code is shown lower-cased with spaces; a timeout says PayPal did not answer in time. The words come from the sealed receipt, so they are as sealed as the receipt.
+
+### C4. One answer from both checks
+- B1: the browser used the trusted key as the user typed it when it checked stamps; it now lower-cases it, as Python does.
+- B2: a browser cannot tell `6.0` from `6` once JSON is parsed. `CarbonVerify.parseStamps(text)` parses with the reviver's `context.source` and turns a `count` written as anything but a plain integer into a marker that is not a number, so the stamp is damaged; `verify` accepts stamps as such text too. Python rejects a float `count` as before. The page reads stamps from storage through `parseStamps`.
+- B3: `kind` must be a non-empty text in both checks and in `append()` (which raises `ValueError`; the book is never left holding a receipt the check calls changed). A receipt must carry all seven keys: a missing `n`, `at_ms`, `kind`, `event`, `prev` or `fp` is *changed*; a missing `sig` is "its signature does not match". Python's `r.get` read a missing key and a null as the same thing; both checks now test presence.
+
+### C5. The run is sealed
+Cause: the header and the ledger read `mode`, `source`, scenario and model from fields beside the book, not sealed by anything.
+Fix: `run_event(...)` builds `{"mode", "source", "scenario", "title", "model", "started"}` and `app._register` appends it, as kind `run`, before anything else is written to the book. `run_of(receipts)` returns the event of receipt 1 when it is of kind `run`. The page's header, the switch's pressed state and the receipt sentence for `run` read receipt 1 only; the ledger takes model, scenario and time (`started`) from it, and leaves them blank when a book has no run receipt. A book without a `run` receipt is described as "a run this book does not describe".
+
+### C6. The device remembers 100 runs
+`DEV_MAX_RUNS` is 100 (about 15 KB of stamps per run, so about 1.5 MB of the 5 MB a browser gives a page). The server keeps 40 runs per visitor, which is unchanged. The "kept no stamp for this run" line now sits directly under the verdict stamp, in warning style. The README's Limits explains the eviction.
+
+### C7. The current book
+`refreshBook()` in `static/app.js` fetches `/api/carbon?sid=<run>` and replaces the page's copy before each of the four buttons acts. If the server no longer has the run the button says so and stops.
+
+### C8. The attacker's prompt
+The prompt says every command sets `PAYPAL_MODE=standin`, never starts the sandbox, and lists C1 to C7 as fixed. The permission rules keep their shape.
+
+### Tests
+`tests/test_carbon_round2.py` holds a test for each of C1 to C8 (the CLI through `subprocess`, the page's own functions under node).

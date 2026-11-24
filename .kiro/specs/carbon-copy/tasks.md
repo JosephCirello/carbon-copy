@@ -82,3 +82,16 @@
   - [x] 11.9 A8: the attacker's prompt names A1 to A6 as fixed
   - [x] 11.10 Tests in `tests/` for every fix; the full run; every file in `scratch_attacks/` run and reported
   - _Requirements: 11_
+
+- [x] 12. What our own attacker found, second round (findings C1 to C8)
+  - [x] 12.1 Spec first: Requirement 12, design section "Task 12", these tasks
+  - [x] 12.2 C1: the command line reads the download's shape (flags win)
+  - [x] 12.3 C2: any failure to read or parse a file is exit 2 with one plain line
+  - [x] 12.4 C3: the screen says when PayPal refused, with its reason in plain words
+  - [x] 12.5 C4: B1 key case, B2 integer count, B3 kind and exact keys, the same in Python and in the browser
+  - [x] 12.6 C5: a sealed `run` receipt first in every book; the header, switch and ledger read from it
+  - [x] 12.7 C6: the device keeps 100 runs; the "no stamp" line beside the verdict; README Limits
+  - [x] 12.8 C7: the four buttons fetch the current book first
+  - [x] 12.9 C8: the attacker's prompt (stand-in only; C1 to C7 fixed)
+  - [x] 12.10 Tests in `tests/` for every fix; the full run; every `scratch_attacks/attack2_*.py` run and reported
+  - _Requirements: 12_

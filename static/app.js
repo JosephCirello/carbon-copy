@@ -10,7 +10,7 @@ const META = { scenarios: [], models: [] };
    not available the device keeps them in memory and the Carbon copy tab says so. The check in carbon_verify.js reads
    only these, never what the server says about itself. */
 const DEVICE = { pinned: null, stamps: {}, runs: [], loaded: false, saved: true };
-const DEV_KEY = "cc.pinned_key", DEV_STAMPS = "cc.stamps.", DEV_RUNS = "cc.runs", DEV_MAX_RUNS = 12;
+const DEV_KEY = "cc.pinned_key", DEV_STAMPS = "cc.stamps.", DEV_RUNS = "cc.runs", DEV_MAX_RUNS = 100;
 function devStore(op, k, v) {
   try {
     if (op === "get") return localStorage.getItem(k);
@@ -37,7 +37,11 @@ function deviceStamps(run) {
   if (!run) return [];
   if (!DEVICE.stamps[run]) {
     let list = [];
-    try { const got = JSON.parse(devStore("get", DEV_STAMPS + run) || "[]"); if (Array.isArray(got)) list = got.filter(devPlainStamp); } catch {}
+    try {
+      const text = devStore("get", DEV_STAMPS + run) || "[]";
+      const got = window.CarbonVerify && window.CarbonVerify.parseStamps ? window.CarbonVerify.parseStamps(text) : JSON.parse(text);   // a count written 6.0 is not a whole number
+      if (Array.isArray(got)) list = got.filter(devPlainStamp);
+    } catch {}
     DEVICE.stamps[run] = list;
   }
   return DEVICE.stamps[run];
@@ -487,6 +491,19 @@ function ccWhat(ev) {                            // what a money move was, in a 
 }
 function ccSentence(r) {                         // one plain sentence for one receipt, built from the event
   const e = r.event || {};
+  const PP_REASON = { REFUND_AMOUNT_EXCEEDED: "the refund is more than what is left on that payment" };
+  const refusal = (res) => {                   // null when the sealed result holds no error, else PayPal's no in plain words
+    if (!res || typeof res !== "object" || !res.error) return null;
+    const err = res.error;
+    if (typeof err === "string" && /^timeout/i.test(err)) return "PayPal did not answer in time.";
+    const said = typeof err === "object" ? (err.message || ((err.details || [])[0] || {}).issue || err.name || "")
+      : (res.message || ((res.details || [])[0] || {}).issue || err);
+    const code = String(said);
+    let why = PP_REASON[code] || (/^[A-Z0-9_]+$/.test(code) ? code.replace(/_/g, " ").toLowerCase() : code);
+    if (why.includes(".: ")) why = why.split(".: ").pop();
+    why = why.replace(/\s+/g, " ").trim().replace(/[.\s]+$/, "").slice(0, 200);
+    return `PayPal refused it${why ? ": " + why : ""}.`;
+  };
   const clip = (s, n) => { s = String(s || "").replace(/\s+/g, " ").trim(); return s.length > n ? s.slice(0, n - 1) + "…" : s; };
   switch (r.kind) {
     case "verdict": {
@@ -495,14 +512,18 @@ function ccSentence(r) {                         // one plain sentence for one r
       const head = e.decision === "ALLOW" ? "Allowed" : e.decision === "HOLD" ? (off ? "Nothing was checking. The check would have held it for Maya" : "Held for Maya") : (off ? "Nothing was checking. The check would have stopped" : "Stopped");
       return `${head}: ${ccWhat(e)}.` + (e.decision === "ALLOW" ? " Nothing in PayPal or Maya's records said otherwise." : why ? ` Why: ${why}` : "");
     }
-    case "paypal": return `Sent to ${PP_NAME(e.backend)}: ${esc0(TOOL_PLAIN[e.tool] || String(e.tool || "a request").replace(/_/g, " "))}.`;
+    case "run": return `The run began: ${esc0(e.title || e.scenario)}, with ${esc0(e.model || "an unnamed model")}, ${e.mode === "observe" ? "with nothing checking" : "with Carbon Copy on"}, ${e.source === "live" ? "a live run" : "a recorded run, replayed"}.`;
+    case "paypal": {
+      const what = esc0(TOOL_PLAIN[e.tool] || String(e.tool || "a request").replace(/_/g, " ")), no = refusal(e.result);
+      return no ? `${no} (${PP_NAME(e.backend)}: ${what}.)` : `Sent to ${PP_NAME(e.backend)}: ${what}.`;
+    }
     case "desk": return e.tool === "read_inbox" ? "The AI read Maya's inbox." : `The AI looked something up: ${String(e.tool || "").replace(/_/g, " ")}.`;
     case "say": return `The AI wrote${e.marker ? " (" + markerWords(e.marker) + ")" : ""}: “${clip(e.text, 220)}”`;
     case "report": {
       const rp = e.report || {}, n = (k) => (Array.isArray(rp[k]) ? rp[k].length : 0);
       return `The AI's end-of-day report: ${n("paid_invoices")} paid, ${n("held")} held, ${n("refunded_orders")} refunded, ${n("accepted_disputes")} disputes given in on.`;
     }
-    case "owner": return e.action === "approved" ? "Maya approved a held payment. It went to PayPal." : e.action === "declined" ? "Maya declined a held payment. It never went to PayPal." : "Maya acted on a held payment.";
+    case "owner": return e.action === "approved" ? (refusal(e.result) ? `Maya approved a held payment. ${refusal(e.result)}` : "Maya approved a held payment. It went to PayPal.") : e.action === "declined" ? "Maya declined a held payment. It never went to PayPal." : "Maya acted on a held payment.";
     default: return `Something happened: ${esc0(r.kind)}.`;
   }
 }
@@ -513,12 +534,18 @@ function ccStamp(res) {                          // the rubber stamp: a word in 
   return `<div class="stamp bad" role="img" aria-label="The book was changed at receipt ${esc(res.first_bad)}">CHANGED AT #${esc(res.first_bad)}</div>`;
 }
 function ccFmt(field, v) { return field === "amount" && (typeof v === "number" || (typeof v === "string" && v.trim() !== "" && !isNaN(v))) ? usd(v) : typeof v === "object" ? JSON.stringify(v) : String(v); }
+function ccRun() {                               // the sealed event of receipt 1 when it is of kind "run", else null
+  const first = CC && CC.receipts && CC.receipts[0];
+  const e = first && first.kind === "run" && first.event;
+  return e && typeof e === "object" && (e.mode === "enforce" || e.mode === "observe") ? e : null;
+}
+const ccRunMode = () => (ccRun() || {}).mode;
 function drawCarbon() {
   const box = $("#ccBook"), has = CC && CC.receipts && CC.receipts.length;
   const hasBook = !!has;
   const sw = $("#ccSwitch");
   sw.hidden = !(CC && CC.has_twin);
-  if (CC && CC.mode) sw.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === CC.mode)));
+  if (CC && CC.receipts && CC.receipts.length) sw.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === ccRunMode())));
   ["#ccCheck", "#ccTamper", "#ccForge", "#ccDownload"].forEach((s) => ($(s).disabled = !hasBook));
   drawDevice();
   if (!hasBook) {
@@ -527,8 +554,10 @@ function drawCarbon() {
     return;
   }
   const mode = META.paypal_mode === "sandbox" ? "PayPal sandbox" : "PayPal stand-in (no real money, no PayPal account)";
-  const which = CC.mode === "observe" ? "the run with nothing checking" : "the run with Carbon Copy on";
-  $("#ccSub").textContent = `${CC.receipts.length} receipts from ${which} (a ${CC.source}). PayPal here: ${mode}.`;
+  const run = ccRun();                           // every word about the run comes from the book's first, sealed receipt
+  const which = !run ? "a run this book does not describe"
+    : `${run.mode === "observe" ? "the run with nothing checking" : "the run with Carbon Copy on"} (${run.source === "live" ? "a live run" : "a recorded run, replayed"})`;
+  $("#ccSub").textContent = `${CC.receipts.length} receipts from ${which}. PayPal here: ${mode}.`;
   const dev = $("#ccDev").checked;
   box.innerHTML = CC.receipts.map((r) => dev
     ? `<div class="cc-row"><pre class="cc-json">${esc(JSON.stringify(sealedOnly(r), null, 2))}</pre></div>`
@@ -568,6 +597,18 @@ function drawDevice() {                          // plain words about what this 
 }
 /* The check, on this device: the book, this device's stamps, this device's pinned key. Falls back to the server only when
    the browser has no Ed25519, and says so. Returns {out, where}. */
+/* The current book, fetched from the server before any button acts, so a copy held since the tab was opened never meets a
+   later honest stamp. False when the server no longer has the run. */
+async function refreshBook() {
+  try {
+    const res = await fetch("/api/carbon" + (CC && CC.session ? "?sid=" + encodeURIComponent(CC.session) : (CC_PICK ? "?mode=" + CC_PICK : "")));
+    if (!res.ok) return false;
+    CC = await res.json();
+    drawCarbon();
+    return true;
+  } catch { return false; }
+}
+const NO_FRESH = "Could not fetch the current book from the server, so nothing was checked. Try again.";
 async function checkOnDevice(book) {
   const stamps = deviceStamps(CC.session), key = devicePinned();
   if (window.CarbonVerify && await window.CarbonVerify.supportsEd25519()) {
@@ -582,27 +623,29 @@ const ccWhere = (where) => where === "browser"
   : `<p class="cc-where warn">This browser cannot check the seals itself (it has no Ed25519), so the server checked, using the stamps and key this device holds.</p><p class="cc-where warn">Checked by the server</p>`;
 function ccNotes() {                             // what the check could not rely on, in plain words
   const key = devicePinned(), n = CC && CC.session ? deviceStamps(CC.session).length : 0;
-  if (!key) return `<p class="cc-say">This device has not seen the signing key yet, so the check can only compare the book with itself.</p>`;
-  if (!n) return `<p class="cc-say">This device kept no stamp for this run, so it cannot tell whether the end of the book was rewritten.</p>`;
+  if (!key) return `<p class="cc-say nostamp">This device has not seen the signing key yet, so the check can only compare the book with itself.</p>`;
+  if (!n) return `<p class="cc-say nostamp">This device kept no stamp for this run, so it cannot tell whether the end of the book was rewritten.</p>`;
   return "";
 }
 $("#ccDev").addEventListener("change", drawCarbon);
 $("#ccSwitch").addEventListener("click", (ev) => {
   const b = ev.target.closest("button[data-mode]");
-  if (!b || b.dataset.mode === (CC && CC.mode)) return;
+  if (!b || b.dataset.mode === ccRunMode()) return;
   CC_PICK = b.dataset.mode;
   loadCarbon();
 });
 $("#ccCheck").addEventListener("click", async () => {
   if (!CC) return;
+  if (!(await refreshBook())) { $("#ccResult").textContent = NO_FRESH; return; }
   let got = null;
   try { got = await checkOnDevice({ public_key: CC.public_key, head: CC.head, receipts: CC.receipts }); } catch { got = null; }
   if (!got) { $("#ccResult").textContent = "The check did not run. Try again."; return; }
   const out = got.out;
-  $("#ccResult").innerHTML = ccStamp(out) + `<p class="cc-say">${out.intact ? `All ${out.count} receipts are as they were written.` : esc(out.why || "")}</p>` + ccWhere(got.where) + ccNotes();
+  $("#ccResult").innerHTML = ccStamp(out) + ccNotes() + `<p class="cc-say">${out.intact ? `All ${out.count} receipts are as they were written.` : esc(out.why || "")}</p>` + ccWhere(got.where);
 });
 $("#ccTamper").addEventListener("click", async () => {
   if (!CC) return;
+  if (!(await refreshBook())) { $("#ccResult").textContent = NO_FRESH; return; }
   const res = await fetch("/api/carbon/tamper" + (CC.session ? "?sid=" + encodeURIComponent(CC.session) + "&mode=" + encodeURIComponent(CC.mode || "enforce") : ""), { method: "POST" });
   if (!res.ok) { $("#ccResult").textContent = "There is nothing to change yet."; return; }
   const t = await res.json(), r = t.result || {};
@@ -611,6 +654,7 @@ $("#ccTamper").addEventListener("click", async () => {
 });
 $("#ccForge").addEventListener("click", async () => {
   if (!CC) return;
+  if (!(await refreshBook())) { $("#ccResult").textContent = NO_FRESH; return; }
   if (!devicePinned()) { $("#ccResult").innerHTML = `<p class="cc-say">This device has not seen the signing key yet, so it has nothing to hold the forgery up against. Run the day on the Watch tab first.</p>`; return; }
   const res = await fetch("/api/carbon/forge" + (CC.session ? "?sid=" + encodeURIComponent(CC.session) + "&mode=" + encodeURIComponent(CC.mode || "enforce") : ""), { method: "POST" });
   if (!res.ok) { $("#ccResult").textContent = "There is nothing to copy yet."; return; }
@@ -624,8 +668,9 @@ $("#ccForge").addEventListener("click", async () => {
   $("#ccResult").innerHTML = `<p class="cc-say">${esc(story)} The real book was not touched.</p>` + ccStamp(got.out)
     + `<p class="cc-say">${got.out.intact ? "This device did not catch it, because it holds no stamp that reaches the book. That is the limit described in the README." : esc(got.out.why || "")}</p>` + ccWhere(got.where);
 });
-$("#ccDownload").addEventListener("click", () => {
+$("#ccDownload").addEventListener("click", async () => {
   if (!CC) return;
+  if (!(await refreshBook())) { $("#ccResult").textContent = NO_FRESH; return; }
   const blob = new Blob([JSON.stringify(bookParts(), null, 2)], { type: "application/json" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);

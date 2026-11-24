@@ -36,7 +36,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from receipts.agent import run_episode
-from receipts.carbon import CarbonCopy, Signer, forge_demo, safe_json, tamper_demo, verify as carbon_verify
+from receipts.carbon import CarbonCopy, Signer, forge_demo, run_event, run_of, safe_json, tamper_demo, verify as carbon_verify
 from receipts.compiler import FIELDS, ai_compile
 from receipts.core import Receipts
 from receipts.paypal import make_paypal
@@ -274,11 +274,15 @@ def _carbon_of(visitor: Visitor, sid: str):
     return get
 
 
-def _register(r: Receipts, q: queue.Queue, sid: str, visitor: Visitor, source: str = "live run"):
+def _register(r: Receipts, q: queue.Queue, sid: str, visitor: Visitor, source: str = "live run", model: str = ""):
     """Keep the run with its own carbon-copy book (a live run gets it here, before its first event; a replay
     built its Receipts with one already) and the stamps the owner's phone is handed."""
     if r.carbon is None:
         r.carbon = CarbonCopy(SIGNER)
+    if not r.carbon.receipts():
+        # the first receipt of every book says what the run was; the screen and the ledger read it from here
+        r.carbon.append("run", run_event(r.mode, "live" if source.startswith("live") else "recorded", r.scenario["id"], model,
+                                         title=r.scenario.get("title")))
     with _VISITORS_LOCK:
         visitor.sessions[sid] = {"sid": sid, "r": r, "t": time.time(), "carbon": r.carbon, "stamps": [], "source": source}
         while len(visitor.sessions) > MAX_SESSIONS_PER_VISITOR:
@@ -311,7 +315,7 @@ def run(request: Request, scenario: str, model: str, mode: str = "enforce"):
             return
         try:
             rec = run_episode(BY_ID[scenario], model, mode=mode, on_event=q.put, policy=policy,
-                              on_start=lambda r: _register(r, q, sid, visitor))
+                              on_start=lambda r: _register(r, q, sid, visitor, model=model))
             entry = visitor.sessions.get(sid)
             visitor.live_ledger.extend(_ledger_from(rec, live=True, book=entry["carbon"] if entry else None))
             q.put({"type": "done", "outcome": rec["outcome"], "seconds": rec["seconds"], "error": rec["error"]})
@@ -401,7 +405,7 @@ def replay(request: Request, line: int, speed: float = 1.0, mode: str | None = N
         try:
             pp = make_paypal(scn.get("paypal", {}), scn["id"])
             r = Receipts(scn, pp, mode=use_mode, policy=policy, on_event=q.put, carbon=CarbonCopy(SIGNER))
-            _register(r, q, sid, visitor, source="recorded run, replayed")
+            _register(r, q, sid, visitor, source="recorded run, replayed", model=rec["model"])
             q.put({"type": "replay", "model": rec["model"], "recorded_at": rec.get("ts"), "recorded_mode": rec["mode"], "mode": use_mode})
             # Recorded against the stand-in; in the sandbox the same orders carry real PayPal ids.
             # Both are keyed by the same names ("A.capture_id"), so recorded ids translate one to one.
@@ -616,13 +620,17 @@ def _ledger_from(rec: dict, live: bool = False, book: CarbonCopy | None = None):
     """Ledger rows for one run. With its book, each row also carries the number and fingerprint of the receipt
     for its verdict; rows read from the recorded results files have no book and leave both blank."""
     by_id = {}
+    sealed = None                      # with a book, model, scenario and time come only from its sealed run receipt
     if book is not None:
+        sealed = run_of(book.receipts()) or {}
         by_id = {r["event"].get("id"): r for r in book.receipts() if r["kind"] == "verdict"}
     rows = []
     for v in rec.get("verdicts", []):
         a = v["args"]
-        rows.append({"when": rec.get("ts"), "scenario": rec["scenario"], "model": rec["model"],
-                     "arm": "Carbon Copy ON" if rec["mode"] == "enforce" else "Carbon Copy OFF",
+        rows.append({"when": rec.get("ts") if sealed is None else sealed.get("started", ""),
+                     "scenario": rec["scenario"] if sealed is None else sealed.get("scenario", ""),
+                     "model": rec["model"] if sealed is None else sealed.get("model", ""),
+                     "arm": "Carbon Copy ON" if (rec["mode"] if sealed is None else sealed.get("mode")) == "enforce" else "Carbon Copy OFF",
                      "tool": v["tool"], "amount": v.get("amount"),
                      "to": a.get("receiver_email") or a.get("new_paypal_email") or a.get("capture_id") or a.get("dispute_id"),
                      "ref": a.get("invoice_number") or a.get("capture_id") or a.get("dispute_id") or a.get("vendor"),

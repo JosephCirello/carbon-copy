@@ -90,6 +90,14 @@
   const isWhole = (v) => typeof v === "number" && Number.isInteger(v);
   const timeOk = (v) => typeof v === "number" && Number.isSafeInteger(v) && v >= 0;   // whole milliseconds from 0 to 2^53 - 1
 
+  /* Stamps read from text. A browser cannot tell 6.0 from 6 once JSON is parsed, so a stamp count written as anything but
+     a plain whole number (6.0, 6e0) is read as a marker that is not a number: that stamp is damaged, as in the Python check. */
+  function parseStamps(text) {
+    return JSON.parse(text, (k, v, ctx) =>
+      (k === "count" && typeof v === "number" && ctx && typeof ctx.source === "string" && !/^-?\d+$/.test(ctx.source)) ? { written_as: ctx.source } : v);
+  }
+  const CONTENT_KEYS = ["n", "at_ms", "kind", "event", "prev", "fp"];   // all must be present: a missing key is not a null
+
   async function stampOk(stamp, keyHex) {
     if (!isObj(stamp)) return false;
     const { count, last_fp: lastFp, sig } = stamp;
@@ -98,6 +106,7 @@
   }
 
   async function verify(book, stamps, pinnedKey) {
+    if (typeof stamps === "string") { try { stamps = parseStamps(stamps); } catch (e) { stamps = "not a list"; } }
     if (!isObj(book) || !Array.isArray(book.receipts)) return changed(0, WHY_UNREADABLE, 1);   // any shape but an object holding a list of receipts
     const receipts = book.receipts;
     const count = receipts.length;
@@ -113,7 +122,7 @@
       if (n !== i + 1) return changed(count, "a receipt is missing", i + 1);
       if (r.prev !== prev) return changed(count, "its link to the receipt before was broken", n);
       let contentOk = false;
-      try { contentOk = timeOk(r.at_ms) && (await fingerprint({ n, at_ms: r.at_ms, kind: r.kind, event: r.event, prev: r.prev })) === r.fp; } catch (e) { contentOk = false; }
+      try { contentOk = CONTENT_KEYS.every((k) => Object.prototype.hasOwnProperty.call(r, k)) && typeof r.kind === "string" && r.kind !== "" && timeOk(r.at_ms) && (await fingerprint({ n, at_ms: r.at_ms, kind: r.kind, event: r.event, prev: r.prev })) === r.fp; } catch (e) { contentOk = false; }
       if (!contentOk) return changed(count, "its content was changed", n);
       if (!(await signatureOk(publicKey, r.fp, r.sig))) return changed(count, "its signature does not match", n);
       prev = r.fp;
@@ -126,7 +135,7 @@
     if (head.count !== count || head.last_fp !== prev) return changed(count, "receipts are missing from the end of the book", count + 1);
     if (stamps != null && !(Array.isArray(stamps) && stamps.length === 0)) {
       if (!Array.isArray(stamps)) return changed(count, WHY_STAMP_BAD);
-      const key = pinnedKey != null ? pinnedKey : publicKey;
+      const key = pinnedKey != null ? pinnedKey.toLowerCase() : publicKey;
       for (const s of stamps) if (!(await stampOk(s, key))) return changed(count, WHY_STAMP_BAD);
       for (const s of stamps) {
         if (s.count > count) return changed(count, WHY_SHORT, s.count);
@@ -137,7 +146,7 @@
     return { intact: true, count };
   }
 
-  const api = { verify, canonical, fingerprint, supportsEd25519, codePointCompare };
+  const api = { verify, canonical, fingerprint, supportsEd25519, codePointCompare, parseStamps };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.CarbonVerify = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

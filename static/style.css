@@ -452,3 +452,5 @@ html, body { max-width: 100%; }
 .cc-word b { color: #8aa8dc; font-weight: 400; }
 .phone-next { margin: 0 0 14px; }
 @media (max-width: 900px) { .tabs button { padding: 7px 10px; font-size: 13px; } }
+
+.cc-say.nostamp { color: #e0b252; font-weight: bold; border-left: 4px solid #e0b252; padding-left: 8px; margin: 4px 0 8px; }

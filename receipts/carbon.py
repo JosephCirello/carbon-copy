@@ -44,6 +44,8 @@ _HEX64 = re.compile(r"[0-9a-fA-F]{64}")
 _KEY64 = re.compile(r"[0-9a-f]{64}")
 #: The seven keys a receipt carries, and the only ones it may carry: they are the seal.
 SEALED_KEYS = frozenset({"n", "at_ms", "kind", "event", "prev", "fp", "sig"})
+#: The keys the fingerprint covers: all must be present (a missing key is not the same as a null).
+_CONTENT_KEYS = frozenset({"n", "at_ms", "kind", "event", "prev", "fp"})
 #: The three keys a book is read from; anything else beside them is not part of the book.
 BOOK_KEYS = ("public_key", "head", "receipts")
 
@@ -231,8 +233,11 @@ class CarbonCopy:
         event minus ``"t"`` cleaned by :func:`safe_json`, which is a fresh copy, so
         changing the event afterwards cannot change the book. Whatever the event
         holds (a lone surrogate, NaN, a huge number, a Decimal) this does not raise,
-        so an action is never left without its receipt.
+        so an action is never left without its receipt. The one thing it refuses is a ``kind`` that is not a
+        non-empty text (``ValueError``): the check reads such a receipt as changed.
         """
+        if not isinstance(kind, str) or not kind:
+            raise ValueError("a receipt's kind must be a non-empty text")
         ev = safe_json({k: v for k, v in event.items() if k != "t"})
         at_ms = _receipt_time_ms(event.get("t"))
         with self._lock:
@@ -439,7 +444,8 @@ def verify(book: dict, stamps=None, expected_key: str | None = None) -> dict:
         if r.get("prev") != prev_fp:
             return _changed(len(receipts), "its link to the receipt before was broken", n)
         try:
-            content_ok = _time_ok(r.get("at_ms")) and fingerprint(
+            content_ok = _CONTENT_KEYS.issubset(r) and isinstance(r["kind"], str) and r["kind"] != "" \
+                and _time_ok(r.get("at_ms")) and fingerprint(
                 {"n": n, "at_ms": r.get("at_ms"), "kind": r.get("kind"),
                  "event": r.get("event"), "prev": r.get("prev")}) == r.get("fp")
         except (TypeError, ValueError):     # a value no honest book holds (NaN, a date): not the content that was signed
@@ -635,6 +641,54 @@ def tamper_demo(book: dict, n: int | None = None) -> dict:
     return {**what, "result": verify(work)}
 
 
+RUN_MODES = ("enforce", "observe")
+RUN_SOURCES = ("live", "recorded")
+
+
+def run_event(mode: str, source: str, scenario: str, model: str, title: str | None = None,
+              started_ms: int | None = None) -> dict:
+    """The event of the receipt (kind ``run``) that opens every run's book: what the run was, sealed.
+
+    ``mode`` is ``enforce`` or ``observe``, ``source`` is ``live`` or ``recorded``. ``started`` is the start time as
+    UTC text. Plain data in, plain data out; it only builds the event, ``append()`` writes it."""
+    if mode not in RUN_MODES or source not in RUN_SOURCES:
+        raise ValueError("a run is enforce or observe, live or recorded")
+    ms = started_ms if isinstance(started_ms, int) and 0 <= started_ms <= MAX_SAFE_INT else round(time.time() * 1000)
+    started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ms / 1000))
+    return {"mode": mode, "source": source, "scenario": scenario, "title": title or scenario, "model": model,
+            "started": started, "t": ms / 1000}
+
+
+def run_of(receipts) -> dict | None:
+    """The sealed event of receipt 1 when it is of kind ``run``, else None. Everything the screen says about
+    what the run was comes from here."""
+    if not isinstance(receipts, list) or not receipts or not isinstance(receipts[0], dict):
+        return None
+    first = receipts[0]
+    ev = first.get("event")
+    if first.get("kind") != "run" or not isinstance(ev, dict):
+        return None
+    return ev
+
+
+def read_check_file(parsed, key=None, stamps=None):
+    """From a parsed file, ``(book, stamps, key)`` to check. The file is a bare book or the download the page
+    writes (``{"book", "stamps", "trusted_key"}``). With the download, its stamps and trusted key are used
+    unless ``stamps`` or ``key`` is given (the flags win). Raises ValueError when the file is neither."""
+    if isinstance(parsed, dict) and "receipts" not in parsed and isinstance(parsed.get("book"), dict):
+        book = parsed["book"]
+        if stamps is None:
+            stamps = parsed.get("stamps")
+        if key is None:
+            key = parsed.get("trusted_key")
+            if key is not None and not (isinstance(key, str) and _HEX64.fullmatch(key)):
+                raise ValueError("the trusted key in the file is not 64 hex characters")
+        return book, stamps, key
+    if not isinstance(parsed, dict):
+        raise ValueError("it is not a carbon-copy book")
+    return parsed, stamps, key
+
+
 def _plain(result: dict) -> str:
     """One line in plain words: intact with the count, or the first changed receipt."""
     if result.get("intact"):
@@ -666,16 +720,15 @@ def _main(argv=None) -> int:
             print("could not use the key: it must be 64 hex characters", file=sys.stderr)
             return 2
         try:
-            book = json.loads(Path(args.book).read_text(encoding="utf-8-sig"))
-            stamps = json.loads(Path(args.stamps).read_text(encoding="utf-8-sig")) if args.stamps else None
-        except (OSError, ValueError) as exc:      # missing file, not UTF-8 (UnicodeDecodeError), not JSON
-            print(f"could not read the file: {exc}", file=sys.stderr)
-            return 2
-        if not isinstance(book, dict):
-            print("could not read the file: it is not a carbon-copy book", file=sys.stderr)
+            parsed = json.loads(Path(args.book).read_text(encoding="utf-8-sig"))
+            flag_stamps = json.loads(Path(args.stamps).read_text(encoding="utf-8-sig")) if args.stamps else None
+            book, stamps, key = read_check_file(parsed, key=args.key, stamps=flag_stamps)
+        except Exception as exc:      # noqa: BLE001  missing, not UTF-8, not JSON, nested too deep, wrong shape: never a traceback
+            why = str(exc).splitlines()[0][:200] if isinstance(exc, (OSError, ValueError)) and str(exc) else "it is not a file we can read"
+            print(f"could not read the file: {why}", file=sys.stderr)
             return 2
         try:
-            out = verify(book, stamps, expected_key=args.key)
+            out = verify(book, stamps, expected_key=key)
         except Exception:  # noqa: BLE001  a book that breaks the check is not intact
             out = {"intact": False, "count": 0, "why": "this is not a carbon-copy book we can read"}
         print(_plain(out))
