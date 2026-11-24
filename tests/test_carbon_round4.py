@@ -33,7 +33,7 @@ NODE = shutil.which("node")
 needs_node = pytest.mark.skipif(NODE is None, reason="node is not on PATH")
 NO_KEY = "This file has no key from your device, so the check can only compare the book with itself."
 NO_STAMP = "This file has no stamp, so it cannot tell whether the end of the book was rewritten."
-KEEP = "This server keeps a run for one hour. Download the carbon copies to keep them."
+KEEP = "This server keeps a run with a payment waiting for you for 24 hours, and any other run for one hour. Download the carbon copies to keep them."
 HOSTED = "345c0cf441241146d896623a4dc08bc3a7c0f004c60975e2d072382552a9f6e1"
 DAY, MODEL = "S14_crossed_in_the_mail", "glm-5.3"
 
@@ -250,7 +250,7 @@ def test_f10_the_phone_and_the_carbon_tab_say_the_server_keeps_a_run_for_an_hour
 
 def test_f10_readme_limits_state_the_hour_the_forty_runs_and_the_visitor_limit():
     limits = README.split("## Limits we know about")[1].split("License")[0]
-    assert "keeps a run for one hour" in limits and "at most 40 runs per visitor and 300 visitors" in limits
+    assert "any other run for one hour" in limits and "for 24 hours" in limits and "at most 40 runs per visitor and 300 visitors" in limits
     assert "30 new visitors in 10 minutes" in limits
 
 

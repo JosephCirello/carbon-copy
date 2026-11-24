@@ -95,7 +95,10 @@ VISITOR_SCOPE_KEY = "receipts.visitor"
 ISSUED_SCOPE_KEY = "receipts.visitor_issued"      # True when this request carried no cookie and was handed a new id
 MAX_VISITORS = int(os.environ.get("RECEIPTS_MAX_VISITORS", "300"))            # least recently used is dropped past this
 VISITOR_IDLE_S = float(os.environ.get("RECEIPTS_VISITOR_IDLE_HOURS", "3")) * 3600
-SESSION_MAX_AGE_S = 3600            # a run and its holds are kept for an hour
+SESSION_MAX_AGE_S = 3600            # a run with nothing waiting is kept for an hour
+HOLD_MAX_AGE_S = 24 * 3600          # a run that still has a WAITING hold is kept for 24 hours
+MCP_MAX_BODY = 256 * 1024           # an /mcp request body over this is refused with 413 before any tool runs
+MCP_CALLS_PER_MINUTE = 60           # /mcp requests one client address may make in a minute
 MAX_SESSIONS_PER_VISITOR = 40       # oldest run dropped past this
 NEW_VISITORS_PER_ADDRESS = 30       # new visitors one client address may start ...
 NEW_VISITOR_WINDOW_S = 600          # ... in this many seconds
@@ -158,6 +161,69 @@ class VisitorCookie:
 
 app.add_middleware(VisitorCookie)
 
+_MCP_CALLS: dict[str, list[float]] = {}      # client address -> when it made its recent /mcp requests
+_MCP_LOCK = threading.Lock()
+
+
+class McpGuard:
+    """Plain ASGI middleware for /mcp, which has no login: 60 requests per client address per minute (429), and a
+    body over 256 KB is refused (413) before any tool runs. The body is read here, at most 256 KB + 1 byte, then
+    handed on unchanged, so a request with no length is held to the same limit."""
+
+    def __init__(self, inner):
+        self.inner = inner
+
+    async def __call__(self, scope, receive, send):
+        path = scope.get("path", "")
+        if scope["type"] != "http" or not (path == "/mcp" or path.startswith("/mcp/")):
+            return await self.inner(scope, receive, send)
+        now = time.time()
+        addr = _client_address(Request(scope))
+        with _MCP_LOCK:
+            recent = [t for t in _MCP_CALLS.get(addr, []) if now - t < 60]
+            too_many = len(recent) >= MCP_CALLS_PER_MINUTE
+            if not too_many:
+                recent.append(now)
+            _MCP_CALLS[addr] = recent
+            if len(_MCP_CALLS) > 5000:
+                for k in [k for k, v in _MCP_CALLS.items() if not v or now - v[-1] >= 60]:
+                    _MCP_CALLS.pop(k, None)
+        if too_many:
+            return await JSONResponse({"detail": "Too many requests from your address in the last minute. Please wait a minute and try again."},
+                                      status_code=429, headers={"Retry-After": "60"})(scope, receive, send)
+        headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers", [])}
+        too_big = {"detail": "That request is too large for this demo (the limit is 256 KB). Nothing was done."}
+        try:
+            declared = int(headers.get("content-length", "0") or 0)
+        except ValueError:
+            declared = 0
+        if declared > MCP_MAX_BODY:
+            return await JSONResponse(too_big, status_code=413)(scope, receive, send)
+        chunks, size, more = [], 0, True
+        while more:
+            msg = await receive()
+            if msg["type"] == "http.disconnect":
+                return
+            body = msg.get("body", b"")
+            size += len(body)
+            if size > MCP_MAX_BODY:
+                return await JSONResponse(too_big, status_code=413)(scope, receive, send)
+            chunks.append(body)
+            more = msg.get("more_body", False)
+        whole, sent = b"".join(chunks), False
+
+        async def replay():
+            nonlocal sent
+            if not sent:
+                sent = True
+                return {"type": "http.request", "body": whole, "more_body": False}
+            return await receive()
+
+        await self.inner(scope, replay, send)
+
+
+app.add_middleware(McpGuard)
+
 
 _NEW_BY_ADDRESS: dict[str, list[float]] = {}      # client address -> when it started its recent new visitors
 
@@ -186,9 +252,17 @@ def _admit_new_visitor(request: Request, now: float) -> None:
             _NEW_BY_ADDRESS.pop(k, None)
 
 
+def _run_expired(s: dict, now: float) -> bool:
+    """A run is over when it is older than an hour, or older than 24 hours when a payment in it is still waiting."""
+    age = now - s["t"]
+    if age <= SESSION_MAX_AGE_S:
+        return False
+    return age > HOLD_MAX_AGE_S or not any(h.get("status") == "WAITING" for h in list(s["r"].holds))
+
+
 def _holds_something(v: "Visitor", now: float) -> bool:
     """A visitor worth keeping when the table is full: a payment waiting for them, or a run younger than an hour."""
-    return any(now - s["t"] <= SESSION_MAX_AGE_S or any(h.get("status") == "WAITING" for h in s["r"].holds) for s in list(v.sessions.values()))
+    return any(not _run_expired(s, now) for s in list(v.sessions.values()))
 
 
 def _make_room(now: float, keep: str | None = None) -> None:
@@ -223,7 +297,7 @@ def _visitor(request: Request, create: bool = False, may_start: bool = True) -> 
         else:
             VISITORS.move_to_end(vid)
         v.seen = now
-        for k in [k for k, s in v.sessions.items() if now - s["t"] > SESSION_MAX_AGE_S]:
+        for k in [k for k, s in v.sessions.items() if _run_expired(s, now)]:
             v.sessions.pop(k, None)
         return v
 
@@ -582,6 +656,8 @@ def approve(body: HoldIn, request: Request):
     r = _sessions(request).get(body.session)
     if not r:
         raise HTTPException(404, "session expired")
+    if body.session == "mcp" and r.carbon is not None and r.carbon.size_bytes() >= getattr(r, "mcp_cap_bytes", float("inf")):
+        raise HTTPException(409, "This demo's MCP book is full; restart the server to start a new one.")     # an approval sends money: no room for its receipt
     out = _with_key(r, r.approve(body.hold_id))
     _keep_stamp(request, body.session, out)
     return out

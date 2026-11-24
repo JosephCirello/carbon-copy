@@ -399,8 +399,8 @@ function gapText(g) {
 }
 
 /* ---------- owner ---------- */
-// A visitor's held payments live in the server's memory. When the server restarts, or a run is more than an hour
-// old, they are gone from it: the card on the phone then says so in plain words instead of keeping buttons that do nothing.
+// A visitor's held payments live in the server's memory. When the server restarts, or a run is too old
+// (24 hours with a payment waiting, else an hour), they are gone from it: the card on the phone then says so in plain words instead of keeping buttons that do nothing.
 const EXPIRED_TEXT = "This one has expired, because the demo restarted or it waited too long. It lapsed and was never sent to PayPal. Go back to Watch and press Run the day again.";
 const NO_HOLDS = $("#holds").innerHTML;          // the phone with nothing on it, as the page ships it
 const holdKey = (h) => h.session + "/" + h.id;
@@ -432,7 +432,7 @@ function drawHolds() {
   const isWaiting = (h) => h.status === "WAITING";
   const waiting = SHOWN.filter(isWaiting).length;
   $("#holdCount").hidden = !waiting; $("#holdCount").textContent = waiting; keepTabInView();
-  $("#phKeep").hidden = !(SHOWN.length || GONE.length);      // a run is kept for one hour: say so while one is on the phone
+  $("#phKeep").hidden = !(SHOWN.length || GONE.length);      // a run is kept for 24 hours with a payment waiting, else one hour: say so while one is on the phone
   const box = $("#holds");
   const sig = JSON.stringify([SHOWN.map((h) => [h.session, h.id, h.status]), GONE.map(holdKey), PHONE_STAMPS]);
   if (sig === box.dataset.sig) return;          // unchanged: do not re-render (keeps the cards steady)
@@ -553,7 +553,7 @@ function drawCarbon() {
   sw.hidden = !(CC && CC.has_twin);
   if (CC && CC.receipts && CC.receipts.length) sw.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === ccRunMode())));
   ["#ccCheck", "#ccTamper", "#ccForge", "#ccDownload"].forEach((s) => ($(s).disabled = !hasBook));
-  $("#ccKeep").hidden = !hasBook;                // the server keeps a run for one hour
+  $("#ccKeep").hidden = !hasBook;                // the server keeps a run 24 hours with a payment waiting, else one hour
   drawDevice();
   if (!hasBook) {
     $("#ccSub").textContent = CC_EMPTY;

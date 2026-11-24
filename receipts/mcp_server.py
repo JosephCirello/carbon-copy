@@ -13,6 +13,7 @@ number on file herself) instead of being blocked.
 from __future__ import annotations
 
 import json
+import os
 
 from mcp.server.mcpserver import MCPServer
 
@@ -25,6 +26,9 @@ MAX_HOLDS = 200            # the MCP workspace keeps this many holds in memory (
 MAX_VERDICTS = 500         # ... and this many verdicts
 MAX_ARG_BYTES = 64 * 1024  # an argument longer than this is kept as its first 64 KB plus a note of how much was cut
 HOLDS_DEFAULT_LIMIT = 50
+BOOK_FULL = "This demo's MCP book is full; restart the server to start a new one."
+MONEY_TOOLS_MCP = ("create_refund", "accept_dispute_claim", "create_payout", "update_vendor_payee")
+DEFAULT_BOOK_CAP = int(float(os.environ.get("RECEIPTS_MCP_BOOK_MB", "20")) * 1024 * 1024)   # sealed receipts, as stored JSON
 
 _BIZ, _SCNS = load()
 _BY = {s["id"]: s for s in _SCNS}
@@ -107,6 +111,14 @@ def build(register=None, on_event=None, signer: Signer | None = None) -> tuple[M
         "against the owner's rules and PayPal's own records before it reaches PayPal. A result with blocked_by_receipts or "
         "held_by_receipts did NOT reach PayPal; do not retry it."))
 
+    r.mcp_cap_bytes = DEFAULT_BOOK_CAP      # read at every call; a test may lower it
+
+    def full(tool: str) -> str | None:
+        """Past the cap a tool that moves money or changes a payee is refused and nothing is forwarded: no money move without its receipt."""
+        if tool in MONEY_TOOLS_MCP and r.carbon.size_bytes() >= r.mcp_cap_bytes:
+            return json.dumps({"blocked_by_receipts": True, "why": [BOOK_FULL], "next": "This did not reach PayPal. Do not retry it."})
+        return None
+
     def out(x) -> str:
         trim_history(r)
         return json.dumps(x, default=str)
@@ -137,6 +149,8 @@ def build(register=None, on_event=None, signer: Signer | None = None) -> tuple[M
 
     @srv.tool(description="PayPal: refund a captured payment (checked by Receipts first). Omit amount for a full refund.")
     def create_refund(capture_id: str, amount: float | None = None, note_to_payer: str = "") -> str:
+        if (b := full("create_refund")):
+            return b
         a = {"capture_id": capture_id, "note_to_payer": note_to_payer}
         if amount is not None:
             a["amount"] = amount
@@ -148,6 +162,8 @@ def build(register=None, on_event=None, signer: Signer | None = None) -> tuple[M
 
     @srv.tool(description="PayPal: accept a buyer's dispute claim (checked by Receipts first).")
     def accept_dispute_claim(dispute_id: str, note: str = "") -> str:
+        if (b := full("accept_dispute_claim")):
+            return b
         return out(r.call("accept_dispute_claim", {"dispute_id": dispute_id, "note": note}))
 
     @srv.tool(description="PayPal: show the shipment tracking recorded for an order.")
@@ -156,11 +172,15 @@ def build(register=None, on_event=None, signer: Signer | None = None) -> tuple[M
 
     @srv.tool(description="PayPal Payouts: pay a supplier invoice to a PayPal email (checked by Receipts first).")
     def create_payout(vendor: str, receiver_email: str, amount: float, invoice_number: str, memo: str = "") -> str:
+        if (b := full("create_payout")):
+            return b
         return out(r.call("create_payout", {"vendor": vendor, "receiver_email": receiver_email, "amount": amount,
                                             "invoice_number": invoice_number, "memo": memo}))
 
     @srv.tool(description="Change the PayPal email on record for a supplier. Always held for the owner in MCP mode.")
     def update_vendor_payee(vendor: str, new_paypal_email: str, reason: str = "") -> str:
+        if (b := full("update_vendor_payee")):
+            return b
         return out(r.call("update_vendor_payee", {"vendor": vendor, "new_paypal_email": new_paypal_email, "reason": reason}))
 
     @srv.tool(description="Receipts: list money moves waiting for the owner, and what was decided. Newest first; "

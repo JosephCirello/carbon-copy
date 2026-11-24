@@ -137,3 +137,10 @@
   - [x] 16.9 The recorded-runs test (`recorded` marker, its own CI step) and the README section "What we measured on the book"
   - [x] 16.10 Tests in `tests/` for every fix; both runs; every `scratch_attacks/attack3_*.py` run and reported
   - _Requirements: 16_
+
+- [x] 17. The two findings task 16 left open (F10, F11)
+  - [x] 17.1 Spec first: Requirement 17, design section "Task 17", this task
+  - [x] 17.2 F11: 256 KB body limit (413), 60 requests a minute per address (429), 20 MB MCP book cap that refuses money tools and phone approvals, fails closed
+  - [x] 17.3 F10: 24 hours for a run with a waiting hold, one hour otherwise; the sentence on the phone and the Carbon copy tab; README Limits
+  - [x] 17.4 Tests in `tests/test_carbon_round5.py`; both runs; `attack3_size.py` and `attack3_expiry.py` run and reported
+  - _Requirements: 17_

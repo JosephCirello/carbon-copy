@@ -10,4 +10,6 @@ def _fresh_new_visitor_count():
     mod = sys.modules.get("app")
     if mod is not None:
         mod._NEW_BY_ADDRESS.clear()
+        mod._MCP_CALLS.clear()
     yield
+

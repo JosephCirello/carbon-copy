@@ -355,3 +355,11 @@ Tests are in `tests/test_carbon_round3.py`.
 **The recorded runs.** `tests/test_carbon_recorded_runs.py` replays through `make_paypal` and `Receipts(... carbon=CarbonCopy(SIGNER))` as `replay()` does in `app.py`, declines every hold as the owner, and runs the checks of the outside measurement. It prints its numbers.
 
 Tests are in `tests/test_carbon_round4.py` and `tests/test_carbon_recorded_runs.py`.
+
+## Task 17: the two findings task 16 left open
+
+**F11.** `CarbonCopy` keeps a running count of the stored JSON (`size_bytes()`, added to as each receipt is appended; it reads the book, never changes it). `McpGuard`, a plain ASGI middleware in `app.py` on paths under `/mcp`, counts requests per client address (`_client_address`, the visitor limit's rule) over 60 seconds (429, `Retry-After`), then reads the body up to 256 KB + 1 byte (413 past it, with or without a declared length) and replays it unchanged to the MCP app. In `receipts/mcp_server.py` each of `create_refund`, `accept_dispute_claim`, `create_payout` and `update_vendor_payee` first asks `full(tool)`: when `size_bytes()` is at or past `r.mcp_cap_bytes` (20 MB, env `RECEIPTS_MCP_BOOK_MB`) it returns `blocked_by_receipts` with the book-full sentence and does not call `Receipts.call`. `POST /api/approve` for the MCP workspace answers 409 with the same sentence. A refusal writes no receipt (a refusal that wrote one would let a client keep growing the book); the check is made before the call, so one call can pass the cap by its own receipts, at most about 256 KB of arguments.
+
+**F10.** `_run_expired(s, now)`: a run is over after one hour, or after 24 hours when a hold in it is still WAITING. `_visitor` and `_holds_something` use it. The two sentences on the phone and the Carbon copy tab, and the README Limits, give both times.
+
+Tests are in `tests/test_carbon_round5.py`.

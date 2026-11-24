@@ -222,6 +222,7 @@ class CarbonCopy:
     def __init__(self, signer: Signer):
         self._signer = signer
         self._receipts: list[dict] = []
+        self._bytes = 0                    # the stored JSON so far, counted as each receipt is added
         self._lock = threading.Lock()      # one receipt is written at a time; a stamp is read between writes
 
     def append(self, kind: str, event: dict) -> dict:
@@ -254,7 +255,13 @@ class CarbonCopy:
                 "sig": self._signer.sign(fp),
             }
             self._receipts.append(receipt)
+            self._bytes += len(json.dumps(receipt, separators=(",", ":"))) + 1
             return copy.deepcopy(receipt)
+    def size_bytes(self) -> int:
+        """About how many bytes the sealed receipts take as JSON. Cheap: counted as each receipt is added, never by
+        copying the book."""
+        return self._bytes
+
     def receipts(self) -> list[dict]:
         """Return deep copies of every receipt, so changing them cannot change the book."""
         with self._lock:
