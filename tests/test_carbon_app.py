@@ -307,7 +307,7 @@ import re  # noqa: E402
 import shutil  # noqa: E402
 import subprocess  # noqa: E402
 
-from tests.readme_counts import assert_readme_counts_match  # noqa: E402
+from tests.readme_counts import assert_readme_counts_match, assert_spec_changes_match  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 HTML = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
@@ -559,7 +559,8 @@ def test_spec_carries_requirement_11_and_task_11():
 def test_readme_is_in_line_with_task_11():
     assert "Amounts that are not whole numbers are sealed as text, so the book shows the value, not whether the AI wrote it as a number or as text." in README
     assert_readme_counts_match(README)
-    assert "seventeen times" in README and "sixteen times" not in README and "eight times" not in README
+    assert_spec_changes_match(README)
+    assert "sixteen times" not in README and "eight times" not in README
     section = README[README.index("## How Kiro built it"):README.index("## Limits we know about")]
     assert "kiro-cli mcp list" in section and "Mode 'carbon-attacker' not found" in section
     assert "aren't available to me" in section

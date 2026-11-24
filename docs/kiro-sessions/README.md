@@ -30,3 +30,4 @@ The team wrote the spec (`.kiro/specs/carbon-copy/`), the steering files and the
 - [task 22 (rules saved before a run; one lock for the tap and the agent)](26_task22_signed_cookie_and_one_lock.md)
 - [task 23 (a README test that pinned a sentence no longer true)](27_task23_a_readme_test_brought_up_to_date.md)
 - [task 24 (count tests that compare the README with the repository)](28_task24_count_tests_that_compare.md)
+- [task 25 (the hosted /mcp answers a client; the README's first screen for a judge)](29_task25_hosted_mcp_and_the_judges_first_screen.md)

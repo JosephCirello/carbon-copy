@@ -64,7 +64,7 @@ SIGNER = Signer.from_env()
 # approve or decline the MCP holds. The receipts_holds MCP tool lists them either way.
 MCP_ON_PHONE = os.environ.get("RECEIPTS_MCP_ON_PHONE", "0") == "1"
 MCP_SESSION: dict = {}              # {"r": Receipts} once the MCP server is built
-from receipts.mcp_server import build as build_mcp  # noqa: E402
+from receipts.mcp_server import build as build_mcp, transport_security as mcp_transport_security  # noqa: E402
 MCP_SERVER, MCP_RECEIPTS = build_mcp(register=lambda r: MCP_SESSION.__setitem__("r", r), signer=SIGNER)
 
 
@@ -878,4 +878,4 @@ def results(group: str = "all"):
     return measure.results(RESULTS, group)
 
 
-app.mount("/mcp", MCP_SERVER.streamable_http_app(streamable_http_path="/"))
+app.mount("/mcp", MCP_SERVER.streamable_http_app(streamable_http_path="/", transport_security=mcp_transport_security()))

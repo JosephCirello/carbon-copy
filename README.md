@@ -2,6 +2,22 @@
 
 **Kiroween 2026 · Resurrection.** The carbon-copy receipt book, the duplicate pad every shop and office used for a century and then threw away, brought back from the dead for the AI that now pays the bills: every move it makes is copied at the moment it happens, and changing a copy afterwards always shows.
 
+## Kiroween 2026: Resurrection
+
+### For judges, in 30 seconds
+
+- **What it is:** a carbon-copy receipt book for the AI that pays a small business's bills through PayPal. Every move it makes is copied and signed the moment it happens, so a changed copy always shows.
+- **Three clicks on the live demo** (https://carbon-copy-ywv3.onrender.com): *Run Maya's day*, then *Decline the double payment on her phone*, then *Try to forge the record*.
+- **Three numbers:** 4 rounds of attacks by Kiro's own `carbon-attacker` agent; 38 weak spots it proved (6 + 7 + 13 + 12), each fixed or written down as a limit; 45,571 receipts from recorded AI runs changed one at a time, and every change was caught at the right receipt.
+- **Links:** [live demo](https://carbon-copy-ywv3.onrender.com) · Video: (link added at submission)
+
+### At a glance
+
+| | | | |
+|---|---|---|---|
+| <img src="docs/images/01_two_sides.jpg" alt="Nothing checking beside Carbon Copy on" width="230"> | <img src="docs/images/02_maya_declines.jpg" alt="Maya declines the double payment on her phone" width="230"> | <img src="docs/images/04_change_one_caught.jpg" alt="One changed copy caught at its receipt" width="230"> | <img src="docs/images/05_forgery_caught.jpg" alt="A forged book caught" width="230"> |
+| The same day twice: with nothing checking, and with Carbon Copy on. | Maya declines the double payment on her phone, and her decline is copied. | One copy is changed to say she approved, and the check names that receipt. | A whole book re-signed under a new key still reads CHANGED. |
+
 Maya runs a nine-person furniture workshop. Her AI agent pays supplier bills through PayPal. One morning it tries to pay the same $1,836.00 bill to Blue Ridge Finishes twice. The check stops the second payment and asks Maya. She declines it.
 
 Weeks later the books are questioned. The log that says she declined lives in the same system the AI runs on, so whoever controls that system can edit it to say she approved the payment. Nothing she holds can show otherwise.
@@ -48,6 +64,45 @@ By default the MCP holds do not appear on the web phone. `RECEIPTS_MCP_ON_PHONE=
 
 Every screen that shows a PayPal result says whether it came from the PayPal sandbox or the stand-in that mirrors PayPal's API shapes. `PAYPAL_MODE=standin` forces the stand-in (the hosted demo does this). The default, `auto`, uses the sandbox when you have sandbox keys.
 
+## Point your own AI at it
+
+The hosted demo is also an MCP server at **https://carbon-copy-ywv3.onrender.com/mcp/**. Any MCP client can use it as if it were PayPal's own server; every refund, payout, dispute concession and payee change goes through the check first.
+
+**In Kiro**, add a remote server to `.kiro/settings/mcp.json` (Kiro's remote-server fields are `url` and, if you need them, `headers`; this server needs no login):
+
+```json
+{
+  "mcpServers": {
+    "carbon-copy-live": {
+      "url": "https://carbon-copy-ywv3.onrender.com/mcp/",
+      "disabled": false,
+      "autoApprove": []
+    }
+  }
+}
+```
+
+**From a terminal**, the repository's own client does the same and prints what the AI sees: `python examples/mcp_client_demo.py https://carbon-copy-ywv3.onrender.com/mcp/`
+
+What the AI will see on each tool call:
+
+- **Blocked:** the answer carries `blocked_by_receipts` and the reason. It did not reach PayPal; the AI should not retry it (a payout to an email that is not the supplier's, a refund larger than the payment).
+- **Held:** the answer carries `held_by_receipts`. It did not reach PayPal; it waits for the owner (a payout for an invoice whose payment is already on its way, a payee change).
+- **Cleared:** the call goes on to PayPal and the answer is PayPal's (a small, honest refund).
+
+**Pull the book and check it.** Call the `carbon_book` tool, save its answer to a file, and check it with no secret, against the key published in this repository:
+
+```
+python -m receipts.carbon verify mcp-book.json --key-file HOSTED_KEY.txt
+```
+
+Plainly:
+
+- The workspace is **shared by every visitor**. Everyone who points a client at it uses the same vendors, the same holds and the same book. Do not put anything private into it.
+- The demo uses **the PayPal stand-in** (it mirrors PayPal's API shapes). No money moves and no PayPal account is touched.
+- It is bounded: **60 requests a minute** from one address, **256 KB** a request, and the MCP book stops at **20 MB** (past that every tool but `carbon_book` refuses). The hosted demo loses its book when it restarts, so save it first.
+- The server answers only the host names it is set to (its own, and localhost). A request with another `Host` is refused with 421; that guard stays on.
+
 ## What came from Receipts and what is new
 
 Carbon Copy is built on [Receipts](https://github.com/JosephCirello/receipts), our earlier open-source checker that sits between an AI agent and PayPal and checks PayPal's own records before money moves. Receipts was built from 2026-11-08 to 2026-11-11, inside the Kiroween period. The first commit here, `1d9b5fe`, imported Receipts unchanged from github.com/JosephCirello/receipts at `abc470c`. Everything after that commit is new:
@@ -63,6 +118,10 @@ Carbon Copy is built on [Receipts](https://github.com/JosephCirello/receipts), o
 The Python package is still called `receipts` and the main class `Receipts`. The measurement of 19 AI models on 19 business days (November 2026) belongs to Receipts and is described in its repository. The *What Receipts measured* tab and the totals in *Her book* show it. The carbon copy itself is new and is not part of those numbers.
 
 ## How it works
+
+![The check says INTACT on an honest book](docs/images/03_check_intact.jpg)
+
+*The check on an honest book: INTACT, with the count of copies it read.*
 
 - A receipt is exactly `{n, at_ms, kind, event, prev, fp, sig}`, and the check refuses a receipt that carries any other key. `at_ms` is the time as a whole number of milliseconds since the epoch. `fp` is SHA-256 over canonical JSON (sorted keys, no spaces, UTF-8) of the other fields. `sig` is an Ed25519 signature over the fingerprint, written as canonical base64 (the one spelling the signer wrote). A public key is exactly 64 lowercase hex characters. The check reads only `public_key`, `head` and `receipts`.
 - `prev` is the previous receipt's `fp` (64 zeros for the first). The book is append-only: there is no update or delete function.
@@ -96,10 +155,22 @@ In a browser, `JSON.stringify` with keys sorted by Unicode code point (not UTF-1
 
 ## How Kiro built it
 
+| Kiro feature | How we used it | Why it mattered |
+|---|---|---|
+| Spec | 1 spec in `.kiro/specs/carbon-copy/`: 20 requirements, 25 tasks, changed 18 times. Every requirement and design section was written before the code it covers. | Each change to a money path has a requirement behind it that anyone can read. |
+| Steering | 3 files: `money-rules.md` (no model decides a payment, the book is append-only, keys never enter the repo), `product.md` (who it is for, plain words on every screen), `tech.md` (stack, commands, where code goes). | Every task started from the same rules, so none had to be repeated or could be forgotten. |
+| Hooks | 3, in `.kiro/hooks/*.json`: run the tests when a `.py` file is saved; keep the book append-only after each save of `receipts/carbon.py`; refuse a file that looks like it holds a key. | A broken check, a way to edit a receipt or a leaked key shows up at the save that caused it. |
+| MCP | The project's own server (`python -m receipts.mcp_server`), loaded by Kiro from `.kiro/settings/mcp.json` as `carbon-copy`. The `carbon-attacker` agent used its tools. The same server runs at `/mcp` on the live demo. | The attacker went at the real tools, and its findings on the MCP path became fixes with tests. |
+| Custom agent | `carbon-attacker`: 4 runs, 38 proven findings (6, 7, 13, 12), each with a test in `tests/` or a written limit. | A reviewer with no stake in the code found what the builder did not. |
+| Property-based tests | `hypothesis` in `tests/test_carbon.py`: it generates lists of events, then changes any field of any one receipt, removes one, cuts the end or swaps two. It asserts an honest book is intact and every change is caught at that receipt. | The book is checked on shapes nobody thought to write by hand. |
+| Kiro CLI headless | Every task given as one instruction (`kiro-cli chat --no-interactive`), in order, with the spec and steering as the only source of truth. 29 recorded sessions in `docs/kiro-sessions/`. | A task is a unit that can be run, tested and committed on its own, and each run has its record. |
+
+**Spec first, never vibe.** The book and every money path went through the spec: each change began as a requirement, then a design section, then a task, and only then code. This is money code. A change nobody wrote down is exactly the kind of bug this product exists to catch, so the way we built it follows the same rule as the product.
+
 Kiro wrote Carbon Copy from a spec, with the rules fixed in steering files and three hooks watching the work. Work went in task by task, one commit per task or pair of tasks. This section answers the questions the Kiroween rules ask.
 
 - **Which Kiro surface, and why.** The Kiro CLI, headless. Each task in `tasks.md` was handed to it as one instruction, in order, with the spec and the steering files as its only source of truth. The reason: a task is a unit that can be run, tested and committed on its own, and no one has to sit in a chat for it.
-- **Spec-driven, not vibe coding.** `.kiro/specs/carbon-copy/` holds `requirements.md` (19 requirements), `design.md` and `tasks.md` (tasks 1 to 24). Every task from 8 on began by writing its requirement and design into the spec, then building (task 19 is this section and changed no code; task 20 changed one test). The spec changed when gaps were found, seventeen times (below).
+- **Spec-driven, not vibe coding.** `.kiro/specs/carbon-copy/` holds `requirements.md` (20 requirements), `design.md` and `tasks.md` (tasks 1 to 25). Every task from 8 on began by writing its requirement and design into the spec, then building (task 19 is this section and changed no code; task 20 changed one test). The spec changed when gaps were found, eighteen times (below).
 - **Steering** (`.kiro/steering/`): `money-rules.md` (no model decides a payment; the book is append-only; checking needs no secret; keys never enter the repo; same input gives the same fingerprint; no real money; Receipts' measurement stays untouched), `product.md` (who Carbon Copy is for, and the plain-words rule for every screen) and `tech.md` (Python 3.13, FastAPI, plain HTML, JavaScript and CSS, Ed25519, the test commands, where new code and tests go). They apply to every task.
 - **Hooks** (`.kiro/hooks/`):
   - *Run the tests when Python changes*: after each save of a `.py` file it runs the whole suite (`pytest -q -x`), so a broken check shows up at once.
@@ -108,12 +179,16 @@ Kiro wrote Carbon Copy from a spec, with the rules fixed in steering files and t
 - **Property-based tests.** `tests/test_carbon.py` uses `hypothesis`: any list of events gives an intact book; changing any one field of any one receipt is caught at that receipt; removing any one receipt, cutting receipts off the end or swapping two is caught; any book survives a trip through the browser's `JSON.parse` and `JSON.stringify`. `tests/test_carbon_parity.py` runs the browser's check under `node` against the same books. The suite runs with no network and no keys.
 - **MCP.** Two uses. The app mounts Receipts' own MCP server at `/mcp`: the same PayPal tool names as PayPal's server, with every money move checked first. Since task 10 that server also starts over stdio with `python -m receipts.mcp_server`, and `.kiro/settings/mcp.json` registers it as `carbon-copy`. Tasks 1 to 9 did not use MCP. Task 11 checked that Kiro really loads it, because the attacker reported "The carbon-copy MCP tools aren't available to me". With Kiro CLI 3.5.0 on Windows: the workspace file `.kiro/settings/mcp.json` is the right place and is read (`kiro-cli mcp list` shows `carbon-copy` under the default agent); the relative `.venv\Scripts\python.exe` works because Kiro starts the server from the workspace folder; the server connects in about three seconds and lists twelve tools. We found two reasons the attacker could still see none, and could not see inside its own session to say which one it hit. First, the agent file used only the newer `permissions` field, which Kiro CLI's default headless engine (`kiro-cli chat --no-interactive`) does not load ("Mode 'carbon-attacker' not found"); the file now also carries the older `allowedTools` and `toolsSettings`, and loads in both engines. Second, a one-shot headless run on the newer engine (`--agent-engine v3`) starts its first turn before the server has connected, so the tools appear a few seconds late; the attacker's prompt now says to look again before giving up. `tests/test_carbon_app.py` starts the server the way Kiro does, from the command and arguments in `mcp.json`.
 - **Custom agent.** `.kiro/agents/carbon-attacker.json` is an agent whose whole job is to attack the book: forge it, rewrite it, hide a change, cause a false alarm, using `python -m receipts.carbon verify` and `pytest`, on copies only, and to report only what it proved. It may write only to `scratch_attacks/`, which git ignores. Its first run found five ways to hide a change or raise a false alarm, one documented limit of the cleaning, and the MCP problem above; task 11 fixed them, each with a test in `tests/`, and the agent's prompt now lists them as already fixed so its next run looks for new shapes. Its second run found seven more (the download the command line could not read, a traceback, a screen saying "went to PayPal" when PayPal refused, three disagreements between the browser and Python, a run header the seal did not cover, the device forgetting old runs, a stale copy read against a newer stamp); task 12 fixed them with tests, and the prompt now says every command it runs sets `PAYPAL_MODE=standin`. Its third run found thirteen (F1 to F13); a network error stopped it before it wrote its report, so it was resumed once with `--resume`, ran its attack tests again and wrote the report (the two records are `16_` and `17_` in the session records). Tasks 15 to 17 fixed them, task 18 fixed a gap the task 17 report showed, and the prompt lists them as fixed. Its fourth run found twelve (the owner's tap could pay a bill twice and sealed "not sent" when PayPal had taken the money, a spoofed `X-Forwarded-For` or a made-up cookie got round the address limits and the visitor rule, a read-only MCP tool grew the book past its cap, a waiting payment could be forgotten or pushed out, `verify.html` called a forged book intact, and a payout of 0 was allowed); task 21 fixed them, each with a test in `tests/`. The reports count their proven findings as: first run six, second run seven, third run thirteen, fourth run twelve (the fourth run's record is `23_` in the session records).
+
+  ![Kiro's own attacker, round one: some of its proven findings, what it tried and was caught at, and the test run after](docs/images/07_kiro_attacker.jpg)
+
+  *Round one of the attacker, as the video shows it: a few of its proven findings, two attacks the check caught, and the suite after the fixes.*
 - **Powers.** None were used. There is no power installed or referenced in this repository.
 - **Not confirmed.** The shell patterns in the agent's permissions (and the older regex form beside them) have not been exercised in a recorded run; if they do not match on your machine, change that one line. A one-shot headless run of the attacker on the newer engine can still start before the MCP server has connected, as described above.
-- **Session records:** [docs/kiro-sessions/](docs/kiro-sessions/README.md), one file per Kiro run (28 runs: every task, the browser round-trip fix, and four runs of the `carbon-attacker` agent, the third resumed once after a network error), each with the instructions Kiro was given and its own end report.
-- **Tasks**: 1 the book and the check; 2 property tests; 3 the change-one demo and command-line checker; 4 wiring into Receipts; 5 the app; 6 this README; 7 the polish round after a human click-through; 8 the Carbon copy tab shows the run Maya saw; 9 the check stops trusting the server, after two attack reviews; 10 what a judge trips on (a review against the Kiroween rules); 11 what our own attacker found; 12 the attacker's second round; 13 an honest book after a local restart; 14 "Try to change one" checked in the browser too; 15 every money move gets its receipt, on every path; 16 a check that does not need to trust us, and honest limits; 17 the two findings 16 left open; 18 a run kept for an hour after the owner's last tap; 19 this README, in line with tasks 14 to 18; 20 one test that failed on GitHub's Linux runner; 21 the fourth attacker run's twelve findings; 22 saving rules before a run, and the instant between the tap's look and its send (an amendment of Requirement 19, not a new requirement); 23 a README test brought up to date; 24 count tests that compare the README with the repository instead of pinning numbers.
+- **Session records:** [docs/kiro-sessions/](docs/kiro-sessions/README.md), one file per Kiro run (29 runs: every task, the browser round-trip fix, and four runs of the `carbon-attacker` agent, the third resumed once after a network error), each with the instructions Kiro was given and its own end report.
+- **Tasks**: 1 the book and the check; 2 property tests; 3 the change-one demo and command-line checker; 4 wiring into Receipts; 5 the app; 6 this README; 7 the polish round after a human click-through; 8 the Carbon copy tab shows the run Maya saw; 9 the check stops trusting the server, after two attack reviews; 10 what a judge trips on (a review against the Kiroween rules); 11 what our own attacker found; 12 the attacker's second round; 13 an honest book after a local restart; 14 "Try to change one" checked in the browser too; 15 every money move gets its receipt, on every path; 16 a check that does not need to trust us, and honest limits; 17 the two findings 16 left open; 18 a run kept for an hour after the owner's last tap; 19 this README, in line with tasks 14 to 18; 20 one test that failed on GitHub's Linux runner; 21 the fourth attacker run's twelve findings; 22 saving rules before a run, and the instant between the tap's look and its send (an amendment of Requirement 19, not a new requirement); 23 a README test brought up to date; 24 count tests that compare the README with the repository instead of pinning numbers; 25 the hosted `/mcp` answers a client (it refused every one with 421 "Invalid Host header"), and the README's first screen for a judge.
 
-The spec changed when gaps were found, seventeen times:
+The spec changed when gaps were found, eighteen times:
 
 1. **The signed count.** A hash chain cannot show that the last receipts were deleted, since every receipt left still links up. The book now carries a signed count and the check compares it to the receipts.
 2. **The phone's stamp.** A book can be cut back to an older length with its older signed count put back. The owner's phone now keeps a stamp outside the book, and a book shorter than a stamp is reported as changed.
@@ -131,7 +206,8 @@ The spec changed when gaps were found, seventeen times:
 14. **The in-page check is code our server sends.** The page's check could be replaced by any script on the page, the command line said a bare "intact" when it had nothing to compare the book with, and nothing outside the server said which key to trust. Requirement 16 freezes the check and pins AG Grid with an integrity hash, adds `verify.html` (one self-contained file saved from GitHub) and the published key in `HOSTED_KEY.txt`, and makes the command line print the same caveats as the page.
 15. **One visitor could push the others out, and the sizes were unbounded.** More than 300 cookie-less requests erased other visitors' runs, holds and books; `/mcp` and the rules text kept anything of any size. Requirements 16 and 17 create no visitor without a cookie unless a run starts, spare waiting holds and young runs when the table is full, limit new visitors to 30 per address per 10 minutes, and bound the rules text, the MCP history, the request body, the request rate and the size of the MCP book.
 16. **The hour.** A run and its held payment vanished after an hour with no word, and then a hold that waited more than an hour was approved and the run was dropped before Maya could download the book of her decision. Requirement 17 keeps a run with a waiting hold for 24 hours and says the times everywhere; Requirement 18 counts the hour from the last activity, not from the start.
-17. **The fourth attacker run's twelve findings.** The owner's tap forwarded a held payment without looking again, so two holds for one invoice, or a hold approved after the same bill was paid another way, paid it twice; a timeout after PayPal took the money was sealed "not sent"; the address limits trusted the first `X-Forwarded-For` entry, which the client writes; a read-only MCP tool kept writing receipts past the book's cap; a waiting payment was forgotten after three idle hours, or pushed out by newcomers or by the 40-run cap, and a tap on a hold that did not exist kept a run alive; `verify.html` trusted whatever key the file named and disagreed with the command line on text stamps and on whole numbers past 2^53; a cookie the server never issued made a visitor; a payout of 0 was allowed. Requirement 19 fixes each one with its own test. Task 22 amended that requirement (rules can be saved before a run, using a signed cookie; the tap and the AI's own payments share one lock), so it is counted in this item and not as an eighteenth change.
+17. **The fourth attacker run's twelve findings.** The owner's tap forwarded a held payment without looking again, so two holds for one invoice, or a hold approved after the same bill was paid another way, paid it twice; a timeout after PayPal took the money was sealed "not sent"; the address limits trusted the first `X-Forwarded-For` entry, which the client writes; a read-only MCP tool kept writing receipts past the book's cap; a waiting payment was forgotten after three idle hours, or pushed out by newcomers or by the 40-run cap, and a tap on a hold that did not exist kept a run alive; `verify.html` trusted whatever key the file named and disagreed with the command line on text stamps and on whole numbers past 2^53; a cookie the server never issued made a visitor; a payout of 0 was allowed. Requirement 19 fixes each one with its own test. Task 22 amended that requirement (rules can be saved before a run, using a signed cookie; the tap and the AI's own payments share one lock), so it is counted in this item and not as a separate change.
+18. **The hosted `/mcp` refused every client.** The MCP library's DNS-rebinding protection accepts only localhost Host values unless told more, so the live demo answered 421 "Invalid Host header" to every initialize. Requirement 20 sets the allowed hosts (localhost, `RECEIPTS_ALLOWED_HOSTS` and `RENDER_EXTERNAL_HOSTNAME`) through the library's own settings, leaves the protection on, and adds this first screen and the "Point your own AI at it" section.
 
 ## Limits we know about
 

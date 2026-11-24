@@ -16,6 +16,7 @@ import json
 import os
 
 from mcp.server.mcpserver import MCPServer
+from mcp.server.transport_security import TransportSecuritySettings
 
 from .carbon import CarbonCopy, Signer, run_event
 from .core import Receipts
@@ -96,6 +97,42 @@ def trim_history(r: Receipts) -> None:
     keep = {h["id"] for h in r.holds}
     for k in [k for k in r._hold_codes if k not in keep]:      # what a hold was held for goes with the hold
         del r._hold_codes[k]
+
+
+def _host_name(entry: str) -> str | None:
+    """One host name from a configured entry (a bare name, or a pasted URL), or None when it is not a plain host name.
+    No wildcard and no path is accepted: the allow-list is the guard, so it takes only names."""
+    name = entry.strip().lower()
+    if "://" in name:
+        name = name.split("://", 1)[1]
+    name = name.split("/", 1)[0]
+    if not name or any(c in name for c in "*?# \t,@") or name.startswith((".", ":")):
+        return None
+    return name
+
+
+def allowed_host_names(env=None) -> list[str]:
+    """The non-local host names /mcp answers to: those in RECEIPTS_ALLOWED_HOSTS (comma-separated) and the one Render sets
+    on every web service, RENDER_EXTERNAL_HOSTNAME (its onrender.com name; empty on other service types)."""
+    env = os.environ if env is None else env
+    raw = [*str(env.get("RECEIPTS_ALLOWED_HOSTS", "") or "").split(","), str(env.get("RENDER_EXTERNAL_HOSTNAME", "") or "")]
+    names: list[str] = []
+    for entry in raw:
+        name = _host_name(entry)
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
+def transport_security(env=None) -> TransportSecuritySettings:
+    """The MCP SDK's DNS-rebinding protection, left ON, with its allowed Host and Origin values set: localhost (any port, as
+    the SDK allows for a local server) plus allowed_host_names(env), each with or without a port."""
+    names = allowed_host_names(env)
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=["127.0.0.1:*", "localhost:*", "[::1]:*", *[h for n in names for h in (n, f"{n}:*")]],
+        allowed_origins=["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*",
+                         *[o for n in names for o in (f"https://{n}", f"https://{n}:*", f"http://{n}", f"http://{n}:*")]])
 
 
 def build(register=None, on_event=None, signer: Signer | None = None) -> tuple[MCPServer, Receipts]:

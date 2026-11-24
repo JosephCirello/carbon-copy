@@ -1,4 +1,4 @@
-﻿"""The README's three counts, read from the README and compared with the repository (task 24).
+"""The README's three counts, read from the README and compared with the repository (task 24).
 
 A new Kiro run adds a session record and usually a task, so a test must not pin "26 runs" or "tasks 1 to 22":
 it reads the number the README states and checks it against what the repository holds.
@@ -42,3 +42,18 @@ def repo_counts(root: Path = ROOT) -> dict[str, int]:
 def assert_readme_counts_match(readme: str, root: Path = ROOT) -> None:
     said, held = readme_counts(readme), repo_counts(root)
     assert said == held, f"the README says {said} but the repository holds {held}"
+
+NUMBER_WORDS = {w: i for i, w in enumerate(
+    "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen "
+    "nineteen twenty twenty-one twenty-two twenty-three twenty-four twenty-five".split())}
+
+
+def assert_spec_changes_match(readme: str) -> None:
+    """The README says "The spec changed when gaps were found, <number word> times:" and then lists them: the word must equal
+    the number of items in the list (task 25: a new spec change must not need a test edited)."""
+    found = re.findall(r"The spec changed when gaps were found, ([a-z-]+) times:", readme)
+    assert len(found) == 1, "the README should say how many times the spec changed exactly once"
+    said = NUMBER_WORDS[found[0]]
+    tail = readme.split(found[0] + " times:", 1)[1].split("## Limits we know about", 1)[0]
+    listed = len(re.findall(r"^\d+\. \*\*", tail, re.M))
+    assert said == listed, f"the README says the spec changed {said} times but lists {listed}"

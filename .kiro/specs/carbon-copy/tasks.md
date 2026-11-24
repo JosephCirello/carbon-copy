@@ -190,3 +190,11 @@
   - [x] 24.2 The tests in `tests/test_carbon_round6.py`, `tests/test_carbon_round7.py` and `tests/test_carbon_app.py` that pinned "26 runs", "tasks 1 to 22", "(19 requirements)" or the task count now use it; the checks that specific sentences and files exist stay
   - [x] 24.3 Proved in a scratch copy: with the README's numbers set for one more record and one more task the tests pass, and with a wrong number they fail; no README or non-test file changed
   - _Requirements: 6 (the README kept true; no new requirement)_
+
+
+- [x] 25. The hosted /mcp answers a client; the README's first screen for a judge (Requirement 20)
+  - [x] 25.1 Spec first: Requirement 20, design section "Task 25", this task
+  - [x] 25.2 `/mcp` allows localhost, `RECEIPTS_ALLOWED_HOSTS` and `RENDER_EXTERNAL_HOSTNAME` through the MCP library's `TransportSecuritySettings`, protection left on; `render.yaml` sets the hosted name
+  - [x] 25.3 README: the judge's first screen, the "How Kiro built it" table, "Point your own AI at it", counts
+  - [x] 25.4 Tests in `tests/test_carbon_round8.py`; session record 29; the whole suite
+  - _Requirements: 20_

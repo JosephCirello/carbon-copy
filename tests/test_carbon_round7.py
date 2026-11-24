@@ -23,7 +23,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey 
 
 from receipts import mcp_server  # noqa: E402
 from receipts.carbon import Signer  # noqa: E402
-from tests.readme_counts import assert_readme_counts_match  # noqa: E402
+from tests.readme_counts import assert_readme_counts_match, assert_spec_changes_match  # noqa: E402
 
 README = (ROOT / "README.md").read_text(encoding="utf-8")
 PAY = dict(vendor="Ashwood Timber Co.", receiver_email="billing@ashwoodtimberco.com", memo="task 22")
@@ -345,5 +345,5 @@ def test_the_readme_no_longer_names_the_gap_and_the_counts_are_true():
     assert "- [x] 22. " in tasks
     assert "in the instant between that look and the send is not seen" not in README
     assert "not atomically" not in README
-    assert "seventeen times" in README
+    assert_spec_changes_match(README)
     assert_readme_counts_match(README)
