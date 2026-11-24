@@ -17,6 +17,7 @@
   const WHY_SHORT = "the book is shorter than a stamp your device already holds";
   const WHY_UNREADABLE = "this is not a carbon-copy book we can read";
   const WHY_BAD_KEY = "its public key is not written the way a key must be";
+  const WHY_BIG_NUMBER = "a whole number in this file is larger than a book ever writes, so the book did not write it";
   const SEALED = new Set(["n", "at_ms", "kind", "event", "prev", "fp", "sig"]);   // the seven keys a receipt carries, and no others
   const KEY64 = /^[0-9a-f]{64}$/;                    // a public key: exactly 64 lowercase hex characters
   const subtle = () => (root.crypto && root.crypto.subtle) || null;
@@ -96,6 +97,21 @@
     return JSON.parse(text, (k, v, ctx) =>
       (k === "count" && typeof v === "number" && ctx && typeof ctx.source === "string" && !/^-?\d+$/.test(ctx.source)) ? { written_as: ctx.source } : v);
   }
+  /* A whole number past plus or minus 2^53 - 1 written anywhere in the text of a file. The book never seals one (it writes such
+     numbers as text), so a file holding one was not written by the book. JSON.parse would round it to another number, so the
+     text itself is read: strings are stepped over, every other run of digits is a number. Call it on text JSON.parse accepted. */
+  function hasUnsafeInteger(text) {
+    if (typeof text !== "string" || !/\d{16}/.test(text)) return false;       // no run of 16 digits anywhere: nothing to look at
+    const token = /"[^"\\]*(?:\\[\s\S][^"\\]*)*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
+    let m;
+    while ((m = token.exec(text)) !== null) {
+      const t = m[0];
+      if (t.charCodeAt(0) === 34 || !/^-?\d+$/.test(t)) continue;               // a string, or a number with a fraction or exponent
+      const digits = t.replace("-", "");
+      if (digits.length > 16 || (digits.length === 16 && BigInt(digits) > 9007199254740991n)) return true;
+    }
+    return false;
+  }
   const CONTENT_KEYS = ["n", "at_ms", "kind", "event", "prev", "fp"];   // all must be present: a missing key is not a null
 
   async function stampOk(stamp, keyHex) {
@@ -152,7 +168,7 @@
     return bookKey.toLowerCase() !== trustedKey.toLowerCase() ? RESTART_NOTE : null;
   }
 
-  const api = { verify, restartNote, canonical, fingerprint, supportsEd25519, codePointCompare, parseStamps };
+  const api = { verify, restartNote, canonical, fingerprint, supportsEd25519, codePointCompare, parseStamps, hasUnsafeInteger, WHY_KEY, WHY_BIG_NUMBER };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   Object.freeze(api);                              // nothing can add to or replace the check's functions
   try {                                            // and nothing can assign a different check to the name later

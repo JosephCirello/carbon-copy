@@ -178,7 +178,7 @@ def test_c3_the_sealed_refusal_comes_from_a_real_stand_in_run():
     r.approve(h1["hold_id"])
     r.approve(h2["hold_id"])
     owner = [x for x in book.receipts() if x["kind"] == "owner"][-1]
-    assert "PayPal refused it" in sentence(owner) and "went to PayPal" not in sentence(owner)
+    assert "refused at the tap" in sentence(owner) and "went to PayPal" not in sentence(owner)      # task 21: caught before it was sent
 
 
 # ---------------------------------------------------------------- C4

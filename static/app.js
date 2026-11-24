@@ -413,9 +413,9 @@ function holdTitle(h) {
   return h.tool === "create_payout" ? `Pay ${a.vendor}` : h.tool === "create_refund" ? "Refund a customer" : h.tool === "accept_dispute_claim" ? "Concede a dispute" : h.tool;
 }
 function holdCard(h) {
-  return `<div class="hold"><div class="nt"><span>CARBON COPY</span><span class="when">${h.status === "WAITING" ? "needs you" : "done"}</span></div><div class="ttl">${esc(holdTitle(h))} · ${esc(h.scenario)}</div><div class="amt">${usd(h.amount)}</div><ul>${(h.why || []).map((w) => `<li>${esc(plain(w))}</li>`).join("")}</ul>${h.status === "WAITING"
+  return `<div class="hold"><div class="nt"><span>CARBON COPY</span><span class="when">${h.status === "WAITING" ? "needs you" : "done"}</span></div><div class="ttl">${esc(holdTitle(h))} · ${esc(h.scenario)}</div><div class="amt">${usd(h.amount)}</div><ul>${(h.why || []).map((w) => `<li>${esc(plain(w))}</li>`).join("")}</ul>${(h.notes || []).map((n) => `<p class="hold-note" role="status">${esc(n)}</p>`).join("")}${h.status === "WAITING"
     ? `<div class="btns"><button class="approve" data-s="${h.session}" data-h="${h.id}">Approve</button><button class="decline" data-s="${h.session}" data-h="${h.id}">Decline</button></div>`
-    : `<div class="state ${h.status}">${h.status === "APPROVED" && (h.result || {}).error ? `Approved, but PayPal did not take it: ${esc(typeof h.result.error === "string" ? h.result.error : ((h.result.error || {}).message || (h.result.error || {}).name || "PayPal refused it"))}` : h.status === "APPROVED" ? `Approved · sent to PayPal ${esc((h.result || {}).backend || "")} · ${esc((h.result || {}).payout_batch_id || (h.result || {}).id || "")} · ${esc((h.result || {}).batch_status || (h.result || {}).status || "")}` : "Declined · never sent to PayPal"}</div>`}${PHONE_STAMPS[holdKey(h)] != null ? `<p class="phone-stamp">Your phone kept stamp #${PHONE_STAMPS[holdKey(h)]}: the book had ${PHONE_STAMPS[holdKey(h)]} receipts.</p>` : ""}</div>`;
+    : `<div class="state ${h.status}${(h.result || {}).refused_at_tap || (h.result || {}).no_answer ? " refused" : ""}">${(h.result || {}).refused_at_tap ? `Approved, then refused at the tap. Nothing was sent to PayPal: ${esc(h.result.error)}` : (h.result || {}).no_answer ? `Approved, but ${esc(h.result.error)}` : h.status === "APPROVED" && (h.result || {}).error ? `Approved, but PayPal did not take it: ${esc(typeof h.result.error === "string" ? h.result.error : ((h.result.error || {}).message || (h.result.error || {}).name || "PayPal refused it"))}` : h.status === "APPROVED" ? `Approved · sent to PayPal ${esc((h.result || {}).backend || "")} · ${esc((h.result || {}).payout_batch_id || (h.result || {}).id || "")} · ${esc((h.result || {}).batch_status || (h.result || {}).status || "")}` : "Declined · never sent to PayPal"}</div>`}${PHONE_STAMPS[holdKey(h)] != null ? `<p class="phone-stamp">Your phone kept stamp #${PHONE_STAMPS[holdKey(h)]}: the book had ${PHONE_STAMPS[holdKey(h)]} receipts.</p>` : ""}</div>`;
 }
 function expiredCard(h) {
   return `<div class="hold expired" role="status"><div class="nt"><span>CARBON COPY</span><span class="when">expired</span></div><div class="ttl">${esc(holdTitle(h))} · ${esc(h.scenario)}</div><div class="amt">${usd(h.amount)}</div><p class="gone">${EXPIRED_TEXT}</p><button class="to-watch">Back to Watch</button></div>`;
@@ -434,7 +434,7 @@ function drawHolds() {
   $("#holdCount").hidden = !waiting; $("#holdCount").textContent = waiting; keepTabInView();
   $("#phKeep").hidden = !(SHOWN.length || GONE.length);      // a run is kept for 24 hours with a payment waiting, else one hour: say so while one is on the phone
   const box = $("#holds");
-  const sig = JSON.stringify([SHOWN.map((h) => [h.session, h.id, h.status]), GONE.map(holdKey), PHONE_STAMPS]);
+  const sig = JSON.stringify([SHOWN.map((h) => [h.session, h.id, h.status, h.notes || [], (h.result || {}).error || ""]), GONE.map(holdKey), PHONE_STAMPS]);
   if (sig === box.dataset.sig) return;          // unchanged: do not re-render (keeps the cards steady)
   box.dataset.sig = sig;
   if (!SHOWN.length && !GONE.length) { box.innerHTML = NO_HOLDS; return; }
@@ -529,6 +529,10 @@ function ccSentence(r) {                         // one plain sentence for one r
     case "owner": if (e.action === "approved" && !e.result) return "Maya approved a held payment.";
       if (e.action === "sent") return refusal(e.result) ? `The approved payment did not go through. ${refusal(e.result)}` : "The approved payment went to PayPal.";
       if (e.action === "not_sent") return `The approved payment did not go to PayPal: ${esc0(clip(e.error, 200))}`;
+      if (e.action === "refused_at_tap") return `The approved payment was refused at the tap and nothing was sent: ${esc0(clip(e.reason, 200))}.`;
+      if (e.action === "no_answer") return "PayPal did not answer; the approved payment may have been sent.";
+      if (e.action === "not_found") return "PayPal's records show no such payment, so the approved payment was most likely not sent.";
+      if (e.action === "lookup_failed") return "PayPal did not answer and its records could not be read; check PayPal before approving again.";
       return e.action === "approved" ? (refusal(e.result) ? `Maya approved a held payment. ${refusal(e.result)}` : "Maya approved a held payment. It went to PayPal.") : e.action === "declined" ? "Maya declined a held payment. It never went to PayPal." : "Maya acted on a held payment.";
     default: return `Something happened: ${esc0(r.kind)}.`;
   }
@@ -740,7 +744,13 @@ $("#compile").addEventListener("click", async () => {
 $("#usePolicy").addEventListener("click", async () => {
   const pol = {};
   document.querySelectorAll("#ruleList [data-k]").forEach((i) => (pol[i.dataset.k] = i.type === "checkbox" ? i.checked : Number(i.value)));
-  await fetch("/api/policy", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ policy: pol, english: $("#english").value, sources: DRAFT.sources || {}, compiled_by: DRAFT.compiled_by || "owner" }) });
+  let res = null;
+  try { res = await fetch("/api/policy", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ policy: pol, english: $("#english").value, sources: DRAFT.sources || {}, compiled_by: DRAFT.compiled_by || "owner" }) }); } catch {}
+  if (!res || !res.ok) {                          // never say the rules are in force when the server did not keep them
+    const j = res ? await res.json().catch(() => null) : null;
+    $("#policySaved").textContent = j && typeof j.detail === "string" ? j.detail : "Your rules could not be saved. Check your connection and try again.";
+    return;
+  }
   $("#policySaved").textContent = "In force for every run from now on.";
 });
 

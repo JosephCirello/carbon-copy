@@ -52,11 +52,12 @@ def money(x) -> float | None:
 
 
 def amount_problem(x) -> str | None:
-    """Why an amount cannot be paid or refunded, in plain words, or None when it is a finite, non-negative number
-    of dollars. NaN and infinity make every limit comparison false, so they must never reach the limits."""
+    """Why an amount cannot be paid or refunded, in plain words, or None when it is a finite number of dollars above
+    zero. NaN and infinity make every limit comparison false, so they must never reach the limits; zero and -0.0 pay
+    nothing yet would be sealed as a payment."""
     a = money(x)
-    if a is None or not math.isfinite(a) or a < 0:
-        return "the amount is not a number of dollars"
+    if a is None or not math.isfinite(a) or a <= 0:
+        return "the amount is not a positive number of dollars"
     return None
 
 

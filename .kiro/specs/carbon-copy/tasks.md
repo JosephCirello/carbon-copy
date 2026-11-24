@@ -162,3 +162,13 @@
   - [x] 20.1 `test_f13_when_even_the_cleaned_form_fails_a_placeholder_is_sent` used a 3,000-deep event and relied on `json.dumps` raising RecursionError, which depends on the platform's recursion limit; it now uses an event holding `float("nan")`, which the first `json.dumps(..., allow_nan=False)` refuses everywhere, with `safe_json` patched to fail
   - [x] 20.2 The other tests read for a RecursionError, path separator, CRLF, Windows-only command or time zone: none needed a change (`mcp.json` paths and `render.yaml` line endings are already normalised); `app.py` unchanged
   - _Requirements: 15_
+
+- [x] 21. The fourth attacker round's twelve findings (findings 1 to 12)
+  - [x] 21.1 Spec first: Requirement 19, design section "Task 21", this task
+  - [x] 21.2 Findings 1 and 2: the tap looks again and refuses a payment that would be paid twice; "no_answer" with a lookup instead of a false "not_sent"; the phone shows both
+  - [x] 21.3 Findings 3 to 8: the address the proxy added; every MCP tool but `carbon_book` refuses past the cap; the table and the run cap spare a waiting payment; a tap on nothing is not activity
+  - [x] 21.4 Findings 9 and 10: `verify.html` trusts the published key by default, with a switch for the file's key; stamps as text and whole numbers past 2^53 read CHANGED in the page and the command line alike
+  - [x] 21.5 Finding 11: a request that does not start a run makes no visitor, cookie or not
+  - [x] 21.6 Finding 12: a payout or refund of zero or less is BLOCKED; no recorded verdict changes
+  - [x] 21.7 `verify.html` rebuilt, README hash, Limits and counts; tests in `tests/` for every fix; both runs; every `scratch_attacks/attack4_*.py` run and reported
+  - _Requirements: 19_

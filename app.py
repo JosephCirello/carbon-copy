@@ -102,7 +102,8 @@ MCP_CALLS_PER_MINUTE = 60           # /mcp requests one client address may make 
 MAX_SESSIONS_PER_VISITOR = 40       # oldest run dropped past this
 NEW_VISITORS_PER_ADDRESS = 30       # new visitors one client address may start ...
 NEW_VISITOR_WINDOW_S = 600          # ... in this many seconds
-BEHIND_PROXY = os.environ.get("RECEIPTS_BEHIND_PROXY", "0") == "1"      # on Render: the client address is the first X-Forwarded-For
+BEHIND_PROXY = os.environ.get("RECEIPTS_BEHIND_PROXY", "0") == "1"      # on Render: the client address is the one the proxy added to X-Forwarded-For
+PROXY_HOPS = max(1, int(os.environ.get("RECEIPTS_PROXY_HOPS", "1") or 1))   # proxies in front of the app, counted from the right of X-Forwarded-For
 MAX_ENGLISH_CHARS = 20_000          # the owner's rules in words
 MAX_SOURCES = 200                   # quotes kept beside the rules
 MAX_SOURCE_CHARS = 2_000            # one quote
@@ -229,12 +230,13 @@ _NEW_BY_ADDRESS: dict[str, list[float]] = {}      # client address -> when it st
 
 
 def _client_address(request: Request) -> str:
-    """Who is asking: the first X-Forwarded-For address when the server sits behind a proxy that sets it
-    (RECEIPTS_BEHIND_PROXY=1, as on Render), else the socket's own address."""
+    """Who is asking. Behind a proxy that appends the address it saw (RECEIPTS_BEHIND_PROXY=1, as on Render) it is the address
+    the PROXY added to X-Forwarded-For: the last entry, or with RECEIPTS_PROXY_HOPS=n the n-th from the right. The first
+    entry is whatever the client wrote and is never used. Too few entries, or none, means the socket's own address."""
     if BEHIND_PROXY:
-        first = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
-        if first:
-            return first[:64]
+        entries = [e.strip() for e in request.headers.get("x-forwarded-for", "").split(",") if e.strip()]
+        if len(entries) >= PROXY_HOPS:
+            return entries[-PROXY_HOPS][:64]
     return request.client.host if request.client else "unknown"
 
 
@@ -261,34 +263,48 @@ def _run_expired(s: dict, now: float) -> bool:
     return age > HOLD_MAX_AGE_S or not any(h.get("status") == "WAITING" for h in list(s["r"].holds))
 
 
-def _holds_something(v: "Visitor", now: float) -> bool:
-    """A visitor worth keeping when the table is full: a payment waiting for them, or a run younger than an hour."""
-    return any(not _run_expired(s, now) for s in list(v.sessions.values()))
+def _run_waits(s: dict) -> bool:
+    """A run with a payment still waiting for the owner."""
+    return any(h.get("status") == "WAITING" for h in list(s["r"].holds))
+
+
+def _has_waiting_hold(v: "Visitor", now: float) -> bool:
+    """A visitor with a payment waiting for them, in a run that is not over (a waiting hold is kept for 24 hours)."""
+    return any(not _run_expired(s, now) and _run_waits(s) for s in list(v.sessions.values()))
+
+
+def _keep_rank(v: "Visitor", now: float) -> int:
+    """How much of a visitor the server holds: 0 nothing (no run that is not over), 1 only runs, 2 a payment waiting."""
+    live = [s for s in list(v.sessions.values()) if not _run_expired(s, now)]
+    return 2 if any(_run_waits(s) for s in live) else (1 if live else 0)
 
 
 def _make_room(now: float, keep: str | None = None) -> None:
-    """Past MAX_VISITORS, drop the least recently seen visitor who has no waiting hold and no run younger than an
-    hour; only when there is none, drop the least recently seen of all. ``keep`` (the visitor just made) is never the one\n    dropped. Caller holds _VISITORS_LOCK."""
+    """Past MAX_VISITORS, drop first a visitor with nothing kept at all, then one with only runs (each time the least
+    recently seen), and a visitor with a waiting payment only when no one else is left (then the least recently seen
+    of them). ``keep`` (the visitor just made) is never the one dropped. Caller holds _VISITORS_LOCK."""
     while len(VISITORS) > max(1, MAX_VISITORS):
-        others = [(k, v) for k, v in VISITORS.items() if k != keep]
+        others = [(k, _keep_rank(v, now)) for k, v in VISITORS.items() if k != keep]      # least recently seen first
         if not others:
             return
-        victim = next((k for k, v in others if not _holds_something(v, now)), others[0][0])
+        victim = next((k for rank in (0, 1) for k, r in others if r == rank), None)
+        if victim is None:
+            victim = others[0][0]
         VISITORS.pop(victim, None)
 
 
 def _visitor(request: Request, create: bool = False, may_start: bool = True) -> Visitor | None:
     """This visitor's state. Reading never creates one (a visitor who has done nothing costs no memory);
-    acting does. ``may_start`` is False for a request that does not start a run: with no cookie of its own it
-    creates nothing. Idle visitors expire, and past MAX_VISITORS room is made (see ``_make_room``)."""
+    acting does. ``may_start`` is False for a request that does not start a run: it creates nothing, with or without
+    a cookie (a cookie the server never issued is just a made-up name). Idle visitors expire, and past MAX_VISITORS room is made (see ``_make_room``)."""
     vid = request.scope.get(VISITOR_SCOPE_KEY)
     now = time.time()
     with _VISITORS_LOCK:
-        for k in [k for k, v in VISITORS.items() if now - v.seen > VISITOR_IDLE_S]:
-            VISITORS.pop(k, None)
+        for k in [k for k, v in VISITORS.items() if now - v.seen > VISITOR_IDLE_S and not _has_waiting_hold(v, now)]:
+            VISITORS.pop(k, None)           # idle too long, unless a payment is still waiting for them (kept until its 24 hours are up)
         v = VISITORS.get(vid) if vid else None
         if v is None:
-            if not create or (not may_start and request.scope.get(ISSUED_SCOPE_KEY, True)):
+            if not create or not may_start:      # only a request that starts a run makes a visitor, cookie or no cookie
                 return None
             _admit_new_visitor(request, now)
             v = Visitor()
@@ -372,7 +388,7 @@ def set_policy(body: PolicyIn, request: Request):
         raise HTTPException(413, f"Those quotes are too long to keep: at most {MAX_SOURCES} of them, each up to {MAX_SOURCE_CHARS:,} characters.")
     visitor = _visitor(request, create=True, may_start=False)
     if visitor is None:
-        raise HTTPException(400, "Please load the page first, then save your rules.")
+        raise HTTPException(400, "Please load the page first and start a run (Run the day), then save your rules: nothing is kept for someone who has not started a run.")
     rules = visitor.rules
     rules.update({"policy": _validate(body.policy), "english": body.english or rules["english"],
                   "sources": body.sources, "compiled_by": body.compiled_by})
@@ -430,7 +446,10 @@ def _register(r: Receipts, q: queue.Queue, sid: str, visitor: Visitor, source: s
     with _VISITORS_LOCK:
         visitor.sessions[sid] = {"sid": sid, "r": r, "t": time.time(), "carbon": r.carbon, "stamps": [], "source": source}
         while len(visitor.sessions) > MAX_SESSIONS_PER_VISITOR:
-            visitor.sessions.pop(next(iter(visitor.sessions)))
+            others = [k for k in visitor.sessions if k != sid]            # the run just registered is never the one dropped
+            idle = [k for k in others if not _run_waits(visitor.sessions[k])]
+            # the oldest run with nothing waiting; only when every other run has a payment waiting, the oldest of them
+            visitor.sessions.pop(idle[0] if idle else others[0])
     q.put({"type": "session", "session": sid, "mode": r.mode, "backend": r.paypal.backend, "note": getattr(r.paypal, "note", None)})
 
 
@@ -614,7 +633,8 @@ def holds(request: Request):
     out = []
     for sid, r in _sessions(request).items():
         for h in list(r.holds):
-            out.append({"session": sid, **h, "scenario": r.scenario["title"], "amount": _amt(h)})
+            notes = r.hold_notes(h) if h["status"] == "WAITING" else []
+            out.append({"session": sid, **h, "scenario": r.scenario["title"], "amount": _amt(h), "notes": notes})
     return sorted(out, key=lambda h: h["status"] != "WAITING")
 
 
@@ -654,13 +674,18 @@ def _keep_stamp(request: Request, sid: str, out) -> None:
 
 def _touch(request: Request, sid: str) -> None:
     """The owner is acting on this run: its hour starts again. Done BEFORE the tap, because the tap can leave the run
-    with nothing waiting, and a run already over an hour old with nothing waiting is dropped on the next request."""
+    with nothing waiting, and a run already over an hour old with nothing waiting is dropped on the next request.
+    Only called for a tap on a hold that is really waiting: a tap on nothing is not activity."""
     v = _visitor(request)
     if v:
         with _VISITORS_LOCK:
             s = v.sessions.get(sid)
             if s is not None:
                 s["t"] = time.time()
+
+
+def _is_waiting(r: Receipts, hold_id: str) -> bool:
+    return any(h["id"] == hold_id and h["status"] == "WAITING" for h in list(r.holds))
 
 
 @app.post("/api/approve")
@@ -670,7 +695,8 @@ def approve(body: HoldIn, request: Request):
         raise HTTPException(404, "session expired")
     if body.session == "mcp" and r.carbon is not None and r.carbon.size_bytes() >= getattr(r, "mcp_cap_bytes", float("inf")):
         raise HTTPException(409, "This demo's MCP book is full; restart the server to start a new one.")     # an approval sends money: no room for its receipt
-    _touch(request, body.session)
+    if _is_waiting(r, body.hold_id):
+        _touch(request, body.session)
     out = _with_key(r, r.approve(body.hold_id))
     _keep_stamp(request, body.session, out)
     return out
@@ -681,7 +707,8 @@ def decline(body: HoldIn, request: Request):
     r = _sessions(request).get(body.session)
     if not r:
         raise HTTPException(404, "session expired")
-    _touch(request, body.session)
+    if _is_waiting(r, body.hold_id):
+        _touch(request, body.session)
     out = _with_key(r, r.decline(body.hold_id))
     _keep_stamp(request, body.session, out)
     return out

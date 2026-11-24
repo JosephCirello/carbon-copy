@@ -367,3 +367,27 @@ Tests are in `tests/test_carbon_round5.py`.
 ## Task 18: the hour counts from the last activity
 
 `s["t"]` of a run (in `Visitor.sessions`) now means its last activity, not its start. It is set when the run starts and again in `_keep_stamp` each time an approve or decline hands back a stamp (a tap that wrote a receipt). `_run_expired(s, now)` is unchanged in form: over `SESSION_MAX_AGE_S` since `t` is over, unless a hold is WAITING, then `HOLD_MAX_AGE_S`. The sentence on the phone and the Carbon copy tab (`static/index.html`) and the README Limits use the Requirement 18 wording. Tests are in `tests/test_carbon_round5.py`.
+
+## Task 21: the fourth attacker round's twelve findings
+
+**1. The tap looks again.** `Receipts.approve` calls `_tap_problem(hold)` first: `rules.check(tool, args, None, None)` run again against PayPal's records as they are now. It refuses when a finding is a BLOCK, or has a code in `SINCE_HOLD_CODES` (`ALREADY_PAID_IN_PAYPAL`, `PAYMENT_IN_FLIGHT`, `NEAR_DUPLICATE_BILL`, `SPLIT_UNDER_LIMIT`, `REFUND_WHILE_DISPUTED`) that the hold was not already held for (`_hold_codes`, kept beside `holds` so the hold's own shape is unchanged). The reason is a plain sentence ("INV-AT-9501 was paid while this was waiting") or the finding's own words. If the records cannot be read, nothing is sealed and nothing sent, and the answer asks the owner to tap again. Otherwise "approved" is sealed, then either "refused_at_tap" (hold status stays APPROVED, its result carries `refused_at_tap` and the reason) or the forward. `hold_notes(hold)` gives the words for the card before the tap (another waiting hold for the same invoice; "If you approve this now it will be refused: ..."); `/api/holds` adds them as `notes` to a WAITING hold. The second look and the forward happen under the tap lock; a call by the agent that pays the same invoice between the two is the one gap left (the duplicate check at that call already saw the hold's invoice as unpaid).
+
+**2. A send that may have left.** `_forward` already turns a refusal PayPal answered, and a TypeError for bad arguments, into an answer. In `approve`, a `ValueError` or `TypeError` that escapes is the client refusing its own arguments: sealed "not_sent". Any other exception: before the send, `_paypal_before` notes what PayPal's records show for this payment (the payout ids for the invoice, the capture's refunded total, the dispute's status, the vendor's email); after it, "no_answer" is sealed, `_look_up` reads the same records (`payout_records`, `capture_record`, `dispute_record`) and what changed since is sealed: "sent" (with PayPal's id, the money recorded in the run's ledger as for any send) or "not_found". A lookup that itself fails seals "lookup_failed" and says to check PayPal before approving again.
+
+**3. The address.** `_client_address` takes `X-Forwarded-For`'s entries and, when `RECEIPTS_BEHIND_PROXY=1`, the one at `-PROXY_HOPS` (`RECEIPTS_PROXY_HOPS`, default 1); fewer entries than hops, or none, give the socket's address.
+
+**4. The cap.** `full(tool)` in `receipts/mcp_server.py` no longer looks at the tool's name: every tool except `carbon_book` asks it first.
+
+**5 and 6. The table.** `_visitor` drops an idle visitor only when `_has_waiting_hold` is false. `_make_room` ranks each visitor by `_keep_rank`: 0 nothing kept (no run that is not over), 1 only runs, 2 a payment waiting; it drops the least recently seen of rank 0, else of rank 1, else of rank 2.
+
+**7. A tap on nothing.** `/api/approve` and `/api/decline` call `_touch` only when `_is_waiting(r, hold_id)`; then the tap decides.
+
+**8. The run cap.** `_register` drops the oldest run with nothing waiting, never the one being registered; only when every other run has a waiting payment, the oldest of them.
+
+**9 and 10. verify.html.** The page trusts `PUBLISHED` unless the switch `useFileKey` is ticked, and says "signed with a different key than the published one" for the key reason. `carbon_verify.js` adds `hasUnsafeInteger(text)` (steps over strings, reads every other run of digits as a number, true for a whole number past 2^53 - 1; no regex runs unless a 16-digit run exists) and `WHY_BIG_NUMBER`; the page checks the raw text after it parses. `receipts/carbon.py` has the same words and `load_json_text`, which reads a file with `parse_int` noting any whole number past 2^53 - 1 without ever turning a long text into a number; the command line says CHANGED with `WHY_BIG_NUMBER`, exit 1. A `stamps` value that is text is passed to `verify` as a non-list on the page, as Python reads it.
+
+**11. Visitors.** `_visitor(..., create=True, may_start=False)` returns None for a visitor not held, whatever the cookie. The page's "Use these rules" shows the server's words when the rules were not kept.
+
+**12. Zero.** `amount_problem` refuses `a <= 0` with "the amount is not a positive number of dollars". `tests/test_carbon_round3.py` re-scores every recorded run (results/episodes.jsonl and results/frontier) with the rules before task 15, as task 15 left them and as now; every verdict is identical.
+
+Tests are in `tests/test_carbon_round6.py`.

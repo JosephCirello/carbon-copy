@@ -141,8 +141,11 @@ for (const s of scripts) vm.runInThisContext(s);
 """
 
 
-def run_page(tmp_path, texts):
-    (tmp_path / "h.js").write_text(HARNESS, encoding="utf-8")
+def run_page(tmp_path, texts, use_file_key=False):
+    """Each text as a dropped file. With ``use_file_key`` the switch "Use the key in this file instead" is ticked first."""
+    (tmp_path / "h.js").write_text(HARNESS.replace("document.getElementById(\"keys\").hidden = true;",
+                                                   "document.getElementById(\"keys\").hidden = true; document.getElementById(\"useFileKey\").checked = %s;"
+                                                   % ("true" if use_file_key else "false")), encoding="utf-8")
     (tmp_path / "c.json").write_text(json.dumps(texts), encoding="utf-8")
     done = subprocess.run([NODE, str(tmp_path / "h.js"), str(ROOT / "verify.html"), str(tmp_path / "c.json")], capture_output=True,
                           text=True, encoding="utf-8", timeout=120)
@@ -159,7 +162,7 @@ def test_verify_html_says_intact_or_changed_with_the_reason_and_the_notes(tmp_pa
     forged = forge_demo(carbon.book())["book"]
     texts = [json.dumps(honest), json.dumps(changed), json.dumps(honest["book"]), json.dumps({**honest, "stamps": []}),
              json.dumps({**honest, "book": forged}), "not json", json.dumps([1, 2])]
-    got = run_page(tmp_path, texts)
+    got = run_page(tmp_path, texts, use_file_key=True)         # these books are from "our own server": the switch is ticked
     flat = ["\n".join(g["result"]) for g in got]
     assert "stamp ok|INTACT" in flat[0] and "All 5 receipts are as they were written." in flat[0] and NO_KEY not in flat[0] and NO_STAMP not in flat[0]
     assert "stamp bad|CHANGED AT #3" in flat[1] and "its content was changed" in flat[1]
@@ -179,7 +182,7 @@ def test_verify_html_says_when_the_download_trusts_the_published_key(tmp_path):
     d = download(carbon)
     d["trusted_key"] = HOSTED
     d["book"]["public_key"] = HOSTED                # the page only compares the words: the check itself says CHANGED here
-    got = run_page(tmp_path, [json.dumps(d)])
+    got = run_page(tmp_path, [json.dumps(d)], use_file_key=True)
     assert "They match" in "\n".join(got[0]["keys"])
 
 
@@ -292,6 +295,19 @@ def chosen_cookie(web) -> dict:
     return {"Cookie": f"{web.VISITOR_COOKIE}={secrets.token_urlsafe(32)}"}
 
 
+def observe_run(web, client, headers=None):
+    """A visitor made the only way one can be made now: a run starts (the cheapest is the recorded run with nothing checking it,
+    which holds nothing). The replay is not slowed down."""
+    rows = client.get("/api/recorded", params={"scenario": DAY, "model": MODEL}).json()
+    pick = sorted((r for r in rows if r["mode"] == "observe"), key=lambda r: -(r["attempts"] or 0))[0]
+    return client.get("/api/replay", params={"line": pick["line"], "speed": 1000}, headers=headers or {})
+
+
+@pytest.fixture(autouse=True)
+def _no_pauses_in_replays(web, monkeypatch):
+    monkeypatch.setattr(web.time, "sleep", lambda _s: None)
+
+
 def hold_waiting(web, client):
     rows = client.get("/api/recorded", params={"scenario": DAY, "model": MODEL}).json()
     pick = sorted((r for r in rows if r["mode"] == "enforce"), key=lambda r: -(r["attempts"] or 0))[0]
@@ -305,8 +321,10 @@ def test_f4_a_policy_request_with_no_cookie_keeps_nothing(web, fresh):
     res = c.post("/api/policy", json=policy_body(web))
     assert res.status_code == 400 and "load the page first" in res.json()["detail"].lower()
     assert not web.VISITORS and not web._NEW_BY_ADDRESS
-    assert c.post("/api/policy", json=policy_body(web)).status_code == 200      # the page has now been loaded: its cookie came back
-    assert len(web.VISITORS) == 1
+    assert c.post("/api/policy", json=policy_body(web)).status_code == 400      # its cookie came back, but no run has started: still nothing kept
+    assert not web.VISITORS and not web._NEW_BY_ADDRESS
+    assert observe_run(web, c).status_code == 200                               # a run starts: now there is a visitor
+    assert len(web.VISITORS) == 1 and c.post("/api/policy", json=policy_body(web)).status_code == 200
 
 
 def test_f4_301_cookieless_requests_do_not_push_anyone_out(web, fresh, monkeypatch):
@@ -327,8 +345,7 @@ def test_f4_when_the_table_is_full_a_visitor_with_a_waiting_hold_is_dropped_last
     hold_waiting(web, victim)                                  # the oldest visitor, with a payment waiting
     for i in range(6):                                         # six more, one at a time, each past the limit of three
         c = fresh(web.app)
-        c.get("/api/meta")
-        assert c.post("/api/policy", json=policy_body(web)).status_code == 200
+        assert observe_run(web, c).status_code == 200
         assert len(web.VISITORS) <= 3
     assert [h for h in victim.get("/api/holds").json() if h["status"] == "WAITING"], "the waiting payment was dropped for idle visitors"
 
@@ -345,39 +362,38 @@ def test_f4_only_when_everyone_has_something_does_the_oldest_go(web, fresh, monk
 def test_f4_a_young_run_protects_its_visitor_and_an_old_one_does_not(web, fresh, monkeypatch):
     monkeypatch.setattr(web, "MAX_VISITORS", 2)
     a = fresh(web.app)
-    a.get("/api/meta")
-    a.post("/api/policy", json=policy_body(web))               # a visitor with no run at all
+    assert observe_run(web, a).status_code == 200              # a visitor whose only run has nothing waiting
     b = fresh(web.app)
     hold_waiting(web, b)
     for v in web.VISITORS.values():
         for s in v.sessions.values():
-            s["t"] -= web.SESSION_MAX_AGE_S + 5                # b's run is now over an hour old, its hold lapsed with it
+            s["t"] -= web.SESSION_MAX_AGE_S + 5                # every run is now over an hour old: a's is over, b's waits (24 hours)
     d = fresh(web.app)
-    d.get("/api/meta")
-    d.post("/api/policy", json=policy_body(web))
+    assert observe_run(web, d).status_code == 200
     assert len(web.VISITORS) == 2
+    assert [h for h in b.get("/api/holds").json() if h["status"] == "WAITING"] and not a.get("/api/holds").json()
 
 
 def test_f4_thirty_new_visitors_in_ten_minutes_per_address_then_429(web, fresh):
     codes = []
     for _ in range(32):
-        codes.append(fresh(web.app).post("/api/policy", json=policy_body(web), headers=chosen_cookie(web)))
+        codes.append(observe_run(web, fresh(web.app)))
     assert [r.status_code for r in codes] == [200] * 30 + [429] * 2
     assert "wait" in codes[-1].json()["detail"].lower() and "visitor" in codes[-1].json()["detail"].lower()
 
 
-def test_f4_the_address_is_the_first_forwarded_address_only_behind_the_proxy(web, fresh, monkeypatch):
+def test_f4_the_address_is_the_one_the_proxy_added_and_only_behind_the_proxy(web, fresh, monkeypatch):
     monkeypatch.setattr(web, "NEW_VISITORS_PER_ADDRESS", 2)
     monkeypatch.setattr(web, "BEHIND_PROXY", False)            # a header anyone can send is ignored: rotating it buys nothing
-    got = [fresh(web.app).post("/api/policy", json=policy_body(web), headers={**chosen_cookie(web), "X-Forwarded-For": f"10.0.0.{i}"}).status_code
-           for i in range(4)]
+    got = [observe_run(web, fresh(web.app), {"X-Forwarded-For": f"10.0.0.{i}"}).status_code for i in range(4)]
     assert got == [200, 200, 429, 429]
     web._NEW_BY_ADDRESS.clear()
     monkeypatch.setattr(web, "BEHIND_PROXY", True)
-    def post(addr):
-        return fresh(web.app).post("/api/policy", json=policy_body(web), headers={**chosen_cookie(web), "X-Forwarded-For": addr}).status_code
-    assert [post("203.0.113.5, 10.1.1.1"), post("203.0.113.5"), post("203.0.113.5, 10.9.9.9")] == [200, 200, 429]
-    assert post("203.0.113.6") == 200                           # another client address is counted on its own
+    def start(addr):
+        return observe_run(web, fresh(web.app), {"X-Forwarded-For": addr}).status_code
+    # the LAST entry is the one the proxy added; whatever the client wrote in front of it is not counted
+    assert [start("10.1.1.1, 203.0.113.5"), start("10.2.2.2, 203.0.113.5"), start("10.9.9.9, 203.0.113.5")] == [200, 200, 429]
+    assert start("203.0.113.6") == 200                          # another client address is counted on its own
 
 
 def test_f4_render_sets_the_proxy_flag():
@@ -387,7 +403,7 @@ def test_f4_render_sets_the_proxy_flag():
 # ---- F12: policy text has a size ------------------------------------------------------------------------------------
 def test_f12_policy_text_over_the_limits_is_refused_with_413(web, fresh):
     c = fresh(web.app)
-    c.get("/api/meta")
+    assert observe_run(web, c).status_code == 200              # a run has started, so there is a visitor to keep rules for
     body = policy_body(web)
     assert c.post("/api/policy", json={**body, "english": "x" * 20_000}).status_code == 200
     r = c.post("/api/policy", json={**body, "english": "x" * 20_001})

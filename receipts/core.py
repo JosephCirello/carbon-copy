@@ -20,7 +20,10 @@ import uuid
 
 from . import words
 from .desk import PAYPAL_NAMES, SPEECH_FIELDS, Desk
-from .rules import MONEY_TOOLS, RuleBook, Verdict, money
+from .rules import MONEY_TOOLS, RuleBook, Verdict, money, norm_email
+
+#: Findings that depend on what has been paid since a hold was made: one the hold did not already have refuses the tap.
+SINCE_HOLD_CODES = frozenset({"ALREADY_PAID_IN_PAYPAL", "PAYMENT_IN_FLIGHT", "NEAR_DUPLICATE_BILL", "SPLIT_UNDER_LIMIT", "REFUND_WHILE_DISPUTED"})
 
 
 class Receipts:
@@ -40,6 +43,7 @@ class Receipts:
         self.id_aliases: dict[str, str] = {}   # e.g. a refund id from a recorded run -> its order id
         self.report_check: dict | None = None
         self.on_event = on_event or (lambda e: None)
+        self._hold_codes: dict[str, set] = {}   # hold id -> the finding codes it was held for (the tap's second look compares)
         self._tap_lock = threading.Lock()    # approve and decline: one tap at a time on this run, so a hold is decided once
         self.carbon = carbon                 # a CarbonCopy: append-only, signed receipt book; None leaves Receipts unchanged
 
@@ -79,6 +83,7 @@ class Receipts:
             self.emit(type="verdict", **rec)
             if decision != "ALLOW" and self.mode == "enforce":
                 if decision == "HOLD":
+                    self._hold_codes[rec["id"]] = {f.code for f in findings}
                     self.holds.append({"id": rec["id"], "tool": tool, "args": args, "why": [f.why for f in findings], "status": "WAITING"})
                     return {"held_by_receipts": True, "hold_id": rec["id"], "why": [f.why for f in findings],
                             "next": "Sent to the owner for one-tap approval. Do not retry; continue with other work."}
@@ -178,32 +183,147 @@ class Receipts:
 
     # ---- the owner -----------------------------------------------------------------------
     def approve(self, hold_id: str) -> dict:
-        """The owner's tap. It is always sealed: the owner receipt "approved" is written BEFORE the forward, then a
-        receipt with PayPal's answer, a refusal included ("sent"), or the reason nothing was sent ("not_sent"). A forward that fails leaves the
-        hold approved with the reason in its result, and the answer carries the error and the stamp, never an exception."""
+        """The owner's tap. It is always sealed. Before anything is sent the rules that depend on what has been paid are run
+        again against PayPal's records as they are NOW (``_tap_problem``); if the payment would no longer pass, the owner
+        receipt "approved" is written and then "refused_at_tap" with the reason in plain words, and nothing is forwarded.
+        Otherwise "approved" is written BEFORE the forward, then a receipt with PayPal's answer, a refusal included
+        ("sent"). A forward that raised before anything left (the client refused its own arguments) is sealed "not_sent".
+        Any other failure may have been sent: it is sealed "no_answer", PayPal's records are looked up, and what they
+        show is sealed ("sent" with PayPal's id, or "not_found"). The answer carries the error and the stamp, never an exception."""
         with self._tap_lock:
             h = next((h for h in self.holds if h["id"] == hold_id and h["status"] == "WAITING"), None)
             if not h:
                 return {"error": "no such waiting hold"}
             if h.get("cut"):    # an argument was too long to keep whole (the MCP history): what it said cannot be sent on
                 return {"error": "this payment's details were too long to keep, so it cannot be approved; decline it and ask again"}
+            try:
+                problem = self._tap_problem(h)
+            except Exception:  # noqa: BLE001  PayPal's records cannot be read now: nothing is decided, nothing is sent, the owner may tap again
+                return {"error": "PayPal's records could not be read just now, so this payment could not be checked again. Nothing was sent. Tap again in a moment."}
             h["status"] = "APPROVED"
             self.emit(type="owner", action="approved", hold_id=hold_id)
-            raised = False
+            if problem:
+                h["result"] = {"error": problem, "refused_at_tap": True}
+                self.emit(type="owner", action="refused_at_tap", hold_id=hold_id, reason=problem)
+                return self._with_head({"error": problem, "refused_at_tap": True})
+            before = self._paypal_before(h)
             try:
                 res = self._forward(h["tool"], h["args"])
-            except Exception as e:  # noqa: BLE001  whatever went wrong, the tap keeps its receipt
-                raised, res = True, {"error": _plain_error(e)}
+            except (ValueError, TypeError) as e:     # the client refused its own arguments: nothing was sent
+                res = {"error": _plain_error(e)}
+                h["result"] = {"error": res["error"]}
+                self.emit(type="owner", action="not_sent", hold_id=hold_id, error=res["error"])
+                return self._with_head(res)
+            except Exception as e:  # noqa: BLE001  a timeout, a dropped connection, anything else: PayPal may have taken it
+                return self._with_head(self._no_answer(h, hold_id, before, _plain_error(e)))
             if not isinstance(res, dict):
                 res = {"result": res}
             h["result"] = {k: res.get(k) for k in ("payout_batch_id", "batch_status", "id", "status", "error", "backend") if k in res}
-            if raised:        # PayPal gave no answer at all: say why. An answer, even a refusal, is sealed as it came.
-                self.emit(type="owner", action="not_sent", hold_id=hold_id, error=res["error"])
-            else:
-                self.emit(type="owner", action="sent", hold_id=hold_id, result=_short(res))
-            if self.carbon is not None:
-                res["stamp"] = self.carbon.head()      # the book's signed head right after this tap, for the owner's phone
-            return res
+            self.emit(type="owner", action="sent", hold_id=hold_id, result=_short(res))
+            return self._with_head(res)
+
+    def _with_head(self, res: dict) -> dict:
+        if self.carbon is not None:
+            res["stamp"] = self.carbon.head()      # the book's signed head right after this tap, for the owner's phone
+        return res
+
+    # ---- the tap looks again ------------------------------------------------------------------
+    def _tap_problem(self, h: dict) -> str | None:
+        """Why this held payment must not be sent now, in plain words, or None. The rules run again, against PayPal's records
+        as they are now: a finding that would BLOCK it, or one of the rules that depend on what has been paid since
+        (the same invoice paid, on its way, a near-duplicate, a split, a dispute opened) that the hold did not already have."""
+        was = self._hold_codes.get(h["id"], set())
+        now = self.rules.check(h["tool"], h["args"], None, None)
+        bad = [f for f in now if f.decision == "BLOCK" or (f.code in SINCE_HOLD_CODES and f.code not in was)]
+        if not bad:
+            return None
+        inv = str(h["args"].get("invoice_number") or "").strip().upper()
+        if bad[0].code == "ALREADY_PAID_IN_PAYPAL" and inv:
+            return f"{inv} was paid while this was waiting"
+        if bad[0].code == "PAYMENT_IN_FLIGHT" and inv:
+            return f"a payment for {inv} was sent while this was waiting"
+        return " ".join(f.why for f in bad)
+
+    def hold_notes(self, h: dict) -> list[str]:
+        """What the owner should know BEFORE the tap, in plain words: another hold for the same invoice is waiting, or the
+        payment would be refused now (for instance the invoice has been paid since). Words only, never a verdict."""
+        notes: list[str] = []
+        inv = str(h["args"].get("invoice_number") or "").strip().upper()
+        if inv and h["tool"] == "create_payout":
+            others = [o for o in list(self.holds) if o is not h and o["status"] == "WAITING" and o["tool"] == "create_payout"
+                      and str(o["args"].get("invoice_number") or "").strip().upper() == inv]
+            if others:
+                notes.append(f"Another payment for {inv} is also waiting. Approve only one: the second would pay the same bill twice, and it will be refused.")
+        try:
+            problem = self._tap_problem(h)
+        except Exception:  # noqa: BLE001  the notes are words only: no answer from PayPal means no note
+            problem = None
+        if problem:
+            notes.append(f"If you approve this now it will be refused: {problem}.")
+        return notes
+
+    def _paypal_before(self, h: dict) -> dict:
+        """What PayPal's records show for this payment BEFORE it is sent, so that after a failure only what the send itself
+        changed counts as sent. Never raises."""
+        try:
+            tool, a = h["tool"], h["args"]
+            if tool == "create_payout":
+                return {"ids": {str(r.get("id")) for r in self.paypal.payout_records(a.get("invoice_number"))}}
+            if tool == "create_refund":
+                rec = self.paypal.capture_record(str(a.get("capture_id") or ""))
+                return {"refunded": (rec or {}).get("refunded")}
+            if tool == "accept_dispute_claim":
+                rec = self.paypal.dispute_record(a.get("dispute_id"))
+                return {"status": (rec or {}).get("status")}
+            if tool == "update_vendor_payee":
+                return {"email": norm_email((self.desk.vendor(a.get("vendor")) or {}).get("paypal_email"))}
+        except Exception:  # noqa: BLE001
+            pass
+        return {}
+
+    def _no_answer(self, h: dict, hold_id: str, before: dict, why: str) -> dict:
+        """The send raised something other than a refusal: PayPal may have taken it. Seal "no_answer", look the payment up in
+        PayPal's records (the lookup the duplicate check uses), and seal what they show: "sent" with PayPal's id, or "not_found"."""
+        said = "PayPal did not answer; it may have been sent"
+        self.emit(type="owner", action="no_answer", hold_id=hold_id, error=said, detail=why)
+        h["result"] = {"error": said, "no_answer": True}
+        try:
+            found = self._look_up(h, before)
+        except Exception:  # noqa: BLE001  the lookup failed too: say so, never guess
+            lost = said + ", and PayPal's records could not be read to find out. Check PayPal before approving again."
+            h["result"] = {"error": lost, "no_answer": True}
+            self.emit(type="owner", action="lookup_failed", hold_id=hold_id, error=lost)
+            return {"error": lost, "no_answer": True}
+        if found is None:
+            gone = "PayPal did not answer, and PayPal's records show no such payment: it was not found, so it was most likely not sent."
+            h["result"] = {"error": gone, "no_answer": True}
+            self.emit(type="owner", action="not_found", hold_id=hold_id, error=gone)
+            return {"error": gone, "no_answer": True}
+        res = {**found, "found_in_paypal_records": True, "backend": self.paypal.backend}
+        self._record_money(h["tool"], h["args"], res)
+        h["result"] = {k: res.get(k) for k in ("payout_batch_id", "batch_status", "id", "status", "backend", "found_in_paypal_records") if k in res}
+        self.emit(type="owner", action="sent", hold_id=hold_id, result=_short(res), found_after_no_answer=True)
+        return res
+
+    def _look_up(self, h: dict, before: dict) -> dict | None:
+        """The payment as PayPal's records show it now, when the send changed them; None when they show no such payment."""
+        tool, a = h["tool"], h["args"]
+        if tool == "create_payout":
+            new = [r for r in self.paypal.payout_records(a.get("invoice_number")) if str(r.get("id")) not in before.get("ids", set())]
+            return {"payout_batch_id": new[0].get("id"), "batch_status": new[0].get("status")} if new else None
+        if tool == "create_refund":
+            rec = self.paypal.capture_record(str(a.get("capture_id") or ""))
+            was = before.get("refunded")
+            if rec and was is not None and rec["refunded"] > was + 0.004:
+                return {"id": None, "status": "COMPLETED", "amount": {"value": f"{rec['refunded'] - was:.2f}"}}
+            return None
+        if tool == "accept_dispute_claim":
+            rec = self.paypal.dispute_record(a.get("dispute_id"))
+            return {"status": rec["status"]} if rec and rec.get("status") == "RESOLVED" and before.get("status") != "RESOLVED" else None
+        if tool == "update_vendor_payee":
+            now = norm_email((self.desk.vendor(a.get("vendor")) or {}).get("paypal_email"))
+            return {"updated": True, "status": "UPDATED"} if now == norm_email(a.get("new_paypal_email")) and now != before.get("email") else None
+        return None
 
     def decline(self, hold_id: str) -> dict:
         with self._tap_lock:

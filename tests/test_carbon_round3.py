@@ -253,7 +253,7 @@ def test_f5_the_api_answers_200_with_the_error_and_the_stamp_and_the_phone_can_s
         held = r.call("update_vendor_payee", dict(PAYEE_CHANGE))
 
         def boom(**_):
-            raise RuntimeError("the stand-in cannot parse 1836 USD")
+            raise ValueError("the stand-in cannot parse 1836 USD")
         r.desk.update_vendor_payee = boom
         c = TestClient(web.app, raise_server_exceptions=False)
         res = c.post("/api/approve", json={"session": "mcp", "hold_id": held["hold_id"]})
@@ -295,7 +295,7 @@ def test_f6_a_payout_with_an_amount_that_is_not_dollars_is_blocked_and_nothing_m
     srv, r = mcp_server.build(signer=signer())
     moved = len(r.paypal.history)
     out = r.call("create_payout", {**ASHWOOD, "amount": amount})
-    assert out.get("blocked_by_receipts") and "the amount is not a number of dollars" in out["why"][0]
+    assert out.get("blocked_by_receipts") and "the amount is not a positive number of dollars" in out["why"][0]
     assert r.verdicts[-1]["decision"] == "BLOCK" and r.verdicts[-1]["findings"][0]["code"] == "AMOUNT_NOT_A_NUMBER"
     assert len(r.paypal.history) == moved and r.ledger == []
 
@@ -305,9 +305,16 @@ def test_f6_a_refund_with_a_bad_amount_is_blocked_and_a_whole_refund_and_real_am
     cap = next(iter(r.paypal.orders.values()))["capture_id"]
     for bad in ("NaN", "inf", -1, "lots"):
         out = r.call("create_refund", {"capture_id": cap, "amount": bad})
-        assert out.get("blocked_by_receipts") and "not a number of dollars" in out["why"][0]
-    assert rules.amount_problem(None) is not None and rules.amount_problem("$1,836.00") is None and rules.amount_problem(0) is None
+        assert out.get("blocked_by_receipts") and "not a positive number of dollars" in out["why"][0]
+    assert rules.amount_problem(None) is not None and rules.amount_problem("$1,836.00") is None and rules.amount_problem(0) is not None
     assert not r.call("create_refund", {"capture_id": cap, "amount": 1}).get("blocked_by_receipts")
+
+
+def _task15_amount_problem(x):
+    """The rule as task 15 wrote it: finite and not below zero (zero and -0.0 passed)."""
+    import math
+    a = rules.money(x)
+    return "the amount is not a number of dollars" if a is None or not math.isfinite(a) or a < 0 else None
 
 
 def _episode_files():
@@ -352,7 +359,9 @@ def test_f6_re_scoring_every_recorded_run_with_the_old_and_new_rules_gives_the_s
                 with monkeypatch.context() as m:
                     m.setattr(rules, "amount_problem", lambda _x: None)
                     old = _verdicts_of(rec, scn)
-                assert new == old, f"a recorded run's verdicts changed ({rec.get('scenario')}, {rec.get('model')})"
+                    m.setattr(rules, "amount_problem", _task15_amount_problem)      # task 21: and against the rules as task 15 left them
+                    old15 = _verdicts_of(rec, scn)
+                assert new == old == old15, f"a recorded run's verdicts changed ({rec.get('scenario')}, {rec.get('model')})"
                 runs += 1
                 checked += len(new)
     assert runs > 1000 and checked > 1000

@@ -371,6 +371,7 @@ WHY_STAMP_BAD = "a stamp on your device is damaged or forged"
 WHY_SHORT = "the book is shorter than a stamp your device already holds"
 WHY_UNREADABLE = "this is not a carbon-copy book we can read"
 WHY_BAD_KEY = "its public key is not written the way a key must be"
+WHY_BIG_NUMBER = "a whole number in this file is larger than a book ever writes, so the book did not write it"
 
 RESTART_NOTE = ("This server makes a new temporary signing key every time it starts. If you restarted it yourself, "
                 "that is why the key changed: press 'Forget what this device trusts' and run the day again. "
@@ -721,6 +722,22 @@ def read_check_file(parsed, key=None, stamps=None):
     return parsed, stamps, key
 
 
+def load_json_text(text: str):
+    """``(parsed, too_big)`` from the text of a book file. ``too_big`` is True when a whole number past plus or minus
+    2**53 - 1 is written anywhere in it: the book never seals one (``safe_json`` writes them as text), so a file holding
+    one was not written by the book. The number is read as it is written, never rounded. Raises what ``json.loads`` raises."""
+    seen = []
+
+    def whole(s: str):
+        digits = s.lstrip("-")
+        if len(digits) > 16 or int(digits) > MAX_SAFE_INT:        # the length test first: no huge text is ever turned into a number
+            seen.append(True)
+            return 0
+        return int(s)
+
+    return json.loads(text, parse_int=whole), bool(seen)
+
+
 NO_KEY_NOTE = "This file has no key from your device, so the check can only compare the book with itself."
 NO_STAMP_NOTE = "This file has no stamp, so it cannot tell whether the end of the book was rewritten."
 
@@ -787,13 +804,16 @@ def _main(argv=None) -> int:
             print("could not use the key: it must be 64 hex characters", file=sys.stderr)
             return 2
         try:
-            parsed = json.loads(Path(args.book).read_text(encoding="utf-8-sig"))
-            flag_stamps = json.loads(Path(args.stamps).read_text(encoding="utf-8-sig")) if args.stamps else None
+            parsed, big = load_json_text(Path(args.book).read_text(encoding="utf-8-sig"))
+            flag_stamps, big_stamps = load_json_text(Path(args.stamps).read_text(encoding="utf-8-sig")) if args.stamps else (None, False)
             book, stamps, key = read_check_file(parsed, key=args.key, stamps=flag_stamps)
         except Exception as exc:      # noqa: BLE001  missing, not UTF-8, not JSON, nested too deep, wrong shape: never a traceback
             why = str(exc).splitlines()[0][:200] if isinstance(exc, (OSError, ValueError)) and str(exc) else "it is not a file we can read"
             print(f"could not read the file: {why}", file=sys.stderr)
             return 2
+        if big or big_stamps:          # a number the book never writes: changed, in the page's words, before anything else is checked
+            print(WHY_BIG_NUMBER)
+            return 1
         try:
             out = verify(book, stamps, expected_key=key)
         except Exception:  # noqa: BLE001  a book that breaks the check is not intact

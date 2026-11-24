@@ -205,9 +205,10 @@ def test_f11_past_the_cap_money_tools_refuse_nothing_is_forwarded_and_the_book_s
         out = run(call(srv, tool, **args))
         assert out["blocked_by_receipts"] and out["why"] == [mcp_server.BOOK_FULL], tool
     assert len(r.carbon.receipts()) == n and len(r.ledger) == ledger and len(sent) == sent_before
-    assert run(call(srv, "list_vendors"))                        # read-only still answers (and is sealed like any call)
-    book = run(call(srv, "carbon_book"))                         # so does the book
-    assert verify(book)["intact"] is True and book["head"]["count"] == n + 1
+    out = run(call(srv, "list_vendors"))                         # a read-only tool writes receipts too: it refuses as well
+    assert out["blocked_by_receipts"] and out["why"] == [mcp_server.BOOK_FULL] and len(r.carbon.receipts()) == n
+    book = run(call(srv, "carbon_book"))                         # only the book still answers, and writes nothing
+    assert verify(book)["intact"] is True and book["head"]["count"] == n
     assert len(run(call(srv, "receipts_holds"))) >= 1
 
 

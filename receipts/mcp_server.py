@@ -93,6 +93,9 @@ def trim_history(r: Receipts) -> None:
         del r.verdicts[:-MAX_VERDICTS]
     if len(r.holds) > MAX_HOLDS:
         del r.holds[:-MAX_HOLDS]
+    keep = {h["id"] for h in r.holds}
+    for k in [k for k in r._hold_codes if k not in keep]:      # what a hold was held for goes with the hold
+        del r._hold_codes[k]
 
 
 def build(register=None, on_event=None, signer: Signer | None = None) -> tuple[MCPServer, Receipts]:
@@ -114,8 +117,9 @@ def build(register=None, on_event=None, signer: Signer | None = None) -> tuple[M
     r.mcp_cap_bytes = DEFAULT_BOOK_CAP      # read at every call; a test may lower it
 
     def full(tool: str) -> str | None:
-        """Past the cap a tool that moves money or changes a payee is refused and nothing is forwarded: no money move without its receipt."""
-        if tool in MONEY_TOOLS_MCP and r.carbon.size_bytes() >= r.mcp_cap_bytes:
+        """Past the cap EVERY tool but carbon_book is refused and nothing is forwarded: no money move without its receipt, and a
+        read-only tool writes receipts too, so it would keep the book growing. carbon_book writes nothing and still answers."""
+        if r.carbon.size_bytes() >= r.mcp_cap_bytes:
             return json.dumps({"blocked_by_receipts": True, "why": [BOOK_FULL], "next": "This did not reach PayPal. Do not retry it."})
         return None
 
@@ -125,26 +129,36 @@ def build(register=None, on_event=None, signer: Signer | None = None) -> tuple[M
 
     @srv.tool(description="The vendor master: each supplier's PayPal email on record and phone on file.")
     def list_vendors() -> str:
+        if (b := full("list_vendors")):
+            return b
         return out(r.call("list_vendors", {}))
 
     @srv.tool(description="Recent PayPal orders for this business: order id, capture id, amount, refunded, buyer.")
     def list_recent_orders() -> str:
+        if (b := full("list_recent_orders")):
+            return b
         fn = getattr(pp, "list_orders", None)
         return out(fn() if fn else {"note": "use get_order with an order id"})
 
     @srv.tool(description="PayPal: list transactions in a 31-day window. transaction_status: D denied, P pending, "
                           "S successful (the default, as in PayPal's own tool), V reversed.")
     def list_transactions(transaction_status: str = "S", start_date: str = "", end_date: str = "", transaction_id: str = "") -> str:
+        if (b := full("list_transactions")):
+            return b
         a = {k: v for k, v in {"transaction_status": transaction_status, "start_date": start_date, "end_date": end_date,
                                "transaction_id": transaction_id}.items() if v}
         return out(r.call("list_transactions", a))
 
     @srv.tool(description="The owner's book of supplier payments made outside PayPal (paper checks, bank transfers).")
     def payments_book() -> str:
+        if (b := full("payments_book")):
+            return b
         return out(r.call("payments_book", {}))
 
     @srv.tool(description="PayPal: show an order, its capture id, amount captured and refunds.")
     def get_order(id: str) -> str:
+        if (b := full("get_order")):
+            return b
         return out(r.call("get_order", {"id": id}))
 
     @srv.tool(description="PayPal: refund a captured payment (checked by Receipts first). Omit amount for a full refund.")
@@ -158,6 +172,8 @@ def build(register=None, on_event=None, signer: Signer | None = None) -> tuple[M
 
     @srv.tool(description="PayPal: show a buyer dispute.")
     def get_dispute(dispute_id: str) -> str:
+        if (b := full("get_dispute")):
+            return b
         return out(r.call("get_dispute", {"dispute_id": dispute_id}))
 
     @srv.tool(description="PayPal: accept a buyer's dispute claim (checked by Receipts first).")
@@ -168,6 +184,8 @@ def build(register=None, on_event=None, signer: Signer | None = None) -> tuple[M
 
     @srv.tool(description="PayPal: show the shipment tracking recorded for an order.")
     def get_shipment_tracking(order_id: str) -> str:
+        if (b := full("get_shipment_tracking")):
+            return b
         return out(r.call("get_shipment_tracking", {"order_id": order_id}))
 
     @srv.tool(description="PayPal Payouts: pay a supplier invoice to a PayPal email (checked by Receipts first).")
@@ -186,6 +204,8 @@ def build(register=None, on_event=None, signer: Signer | None = None) -> tuple[M
     @srv.tool(description="Receipts: list money moves waiting for the owner, and what was decided. Newest first; "
                           "limit is how many to list (default 50).")
     def receipts_holds(limit: int = HOLDS_DEFAULT_LIMIT) -> str:
+        if (b := full("receipts_holds")):
+            return b
         n = max(0, min(int(limit), MAX_HOLDS))
         return out(list(reversed(r.holds))[:n])
 

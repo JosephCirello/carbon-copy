@@ -52,6 +52,9 @@ TEMPLATE = r'''<!DOCTYPE html>
   <p><b>Drop the downloaded file here</b>, or choose it.</p>
   <input type="file" id="pick" accept=".json,application/json">
 </div>
+<p class="fine">The check uses the key published for the hosted demo (it is built into this page). A book signed with any other key reads CHANGED.</p>
+<label class="fine"><input type="checkbox" id="useFileKey"> Use the key in this file instead (for a book from your own server)</label>
+<p class="fine note">Checked, the check is only as good as where the file came from: a file written by someone else can name any key it likes, and then it will read INTACT.</p>
 <div id="result" aria-live="polite"></div>
 <div class="keys" id="keys" hidden></div>
 <p class="fine">The key published for the hosted demo is <span class="mono" id="pubKey"></span>. It is also in HOSTED_KEY.txt in the repository. Save this page from GitHub, not from the demo, so the check does not come from the server it checks.</p>
@@ -88,33 +91,48 @@ TEMPLATE = r'''<!DOCTYPE html>
     el.setAttribute("aria-label", out.intact ? "The book is intact" : "The book was changed");
     return el;
   }
-  function showKeys(trusted, bookKey) {
+  function showKeys(trusted, bookKey, fromFile) {
     const box = $("keys");
     box.hidden = false;
     box.textContent = "";
     const same = (a, b) => typeof a === "string" && typeof b === "string" && a.toLowerCase() === b.toLowerCase();
-    line(box, "The key this download trusts: " + (typeof trusted === "string" && trusted ? trusted : "none"), "mono");
+    line(box, (fromFile ? "The key in this file, which this check trusts because you chose to: " : "The key this check trusts (the published one): ") + (typeof trusted === "string" && trusted ? trusted : "none"), "mono");
     line(box, "The key published for the hosted demo: " + PUBLISHED, "mono");
-    line(box, !trusted ? "This download names no trusted key, so there is nothing to compare with the published one."
-      : same(trusted, PUBLISHED) ? "They match: the key this download trusts is the published one."
-      : "They do NOT match. This download trusts a different key than the hosted demo's published key. If this book came from the hosted demo, do not rely on it.",
-      same(trusted, PUBLISHED) || !trusted ? "" : "note");
+    if (fromFile)
+      line(box, !trusted ? "This download names no trusted key, so there is nothing to compare with the published one."
+        : same(trusted, PUBLISHED) ? "They match: the key this download trusts is the published one."
+        : "They do NOT match. This download trusts a different key than the hosted demo's published key. If this book came from the hosted demo, do not rely on it.",
+        same(trusted, PUBLISHED) || !trusted ? "" : "note");
     if (typeof bookKey === "string")
       line(box, same(bookKey, PUBLISHED) ? "The book is signed with the published key." : "The book is signed with a different key than the published one: " + bookKey, same(bookKey, PUBLISHED) ? "" : "mono note");
   }
+  function changed(why) {                           // a verdict of CHANGED with no receipt number, in words only
+    const box = $("result");
+    box.textContent = "";
+    box.appendChild(stampWord({ intact: false }));
+    line(box, why);
+  }
 
+  let LAST_TEXT = null;                           // the last file read, so the switch can check it again
   async function checkText(text) {
+    LAST_TEXT = text;
+    const fromFile = $("useFileKey").checked === true;     // by default the PUBLISHED key is trusted, as the command line does with --key-file HOSTED_KEY.txt
     $("keys").hidden = true;
+    text = text.replace(/^\ufeff/, "");
     let parsed;
-    try { parsed = CHECK.parseStamps(text.replace(/^\ufeff/, "")); }
+    try { parsed = CHECK.parseStamps(text); }
     catch (e) { return say([["Could not read the file: it is not a file we can read.", "note"]]); }
-    let book = null, stamps = null, trusted = null;
+    if (CHECK.hasUnsafeInteger(text)) return changed(CHECK.WHY_BIG_NUMBER);     // the number as written in the file, not as JavaScript rounds it
+    let book = null, stamps = null, trusted = fromFile ? null : PUBLISHED;
     if (isObj(parsed) && !("receipts" in parsed) && isObj(parsed.book)) {
       book = parsed.book;
       stamps = parsed.stamps === undefined ? null : parsed.stamps;
-      trusted = parsed.trusted_key === undefined ? null : parsed.trusted_key;
-      if (trusted !== null && !(typeof trusted === "string" && HEX64.test(trusted)))
-        return say([["Could not read the file: the trusted key in the file is not 64 hex characters.", "note"]]);
+      if (typeof stamps === "string") stamps = { written_as_text: stamps };     // stamps written as text are damaged, not a list to read
+      if (fromFile) {
+        trusted = parsed.trusted_key === undefined ? null : parsed.trusted_key;
+        if (trusted !== null && !(typeof trusted === "string" && HEX64.test(trusted)))
+          return say([["Could not read the file: the trusted key in the file is not 64 hex characters.", "note"]]);
+      }
     } else if (isObj(parsed)) {
       book = parsed;
     } else {
@@ -128,10 +146,11 @@ TEMPLATE = r'''<!DOCTYPE html>
     const box = $("result");
     box.textContent = "";
     box.appendChild(stampWord(out));
-    line(box, out.intact ? "All " + out.count + " receipts are as they were written." : String(out.why || ""));
+    const why = !fromFile && out.why === CHECK.WHY_KEY ? "it was signed with a different key than the published one" : String(out.why || "");
+    line(box, out.intact ? "All " + out.count + " receipts are as they were written." : why);
     if (!(typeof trusted === "string" && trusted)) line(box, NO_KEY, "note");
     if (!(Array.isArray(stamps) && stamps.length)) line(box, NO_STAMP, "note");
-    showKeys(trusted, isObj(book) ? book.public_key : null);
+    showKeys(trusted, isObj(book) ? book.public_key : null, fromFile);
   }
 
   function readFile(file) {
@@ -143,6 +162,7 @@ TEMPLATE = r'''<!DOCTYPE html>
   }
   const drop = $("drop");
   $("pick").addEventListener("change", (e) => readFile(e.target.files[0]));
+  $("useFileKey").addEventListener("change", () => { if (LAST_TEXT !== null) checkText(LAST_TEXT); });
   ["dragenter", "dragover"].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.add("over"); }));
   ["dragleave", "drop"].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
   drop.addEventListener("drop", (e) => readFile(e.dataTransfer.files[0]));

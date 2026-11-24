@@ -189,6 +189,8 @@ h2 { font-size: 18px; margin: 0 0 10px; letter-spacing: -.01em; }
 .hold .state { font: 700 13px var(--mono); color: var(--muted); padding: 10px 12px; border-radius: 12px; background: var(--bg); }
 .hold .state.APPROVED { color: var(--ok); background: var(--ok-bg); }
 .hold .state.DECLINED { color: var(--bad); background: var(--bad-bg); }
+.hold .state.refused { color: var(--bad); background: var(--bad-bg); }
+.hold .hold-note { margin: 0 0 10px; padding: 8px 10px; border-radius: 10px; font-size: 13px; color: var(--bad); background: var(--bad-bg); }
 /* a held payment the server no longer has (it restarted, or the run is over an hour old): one plain sentence and the way back */
 .hold.expired .ttl, .hold.expired .amt { color: var(--muted); }
 .hold.expired .amt { text-decoration: line-through; text-decoration-thickness: 2px; }

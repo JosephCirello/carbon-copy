@@ -130,6 +130,8 @@ def test_unticking_a_rule_changes_only_that_visitors_runs(clients):
     a, b = clients
     rules = a.get("/api/policy").json()
     assert rules["compiled_by"] == "defaults" and rules["policy"]["hold_payment_in_flight"] is True
+    assert a.post("/api/policy", json={"policy": rules["policy"], "english": "", "sources": {}, "compiled_by": "owner"}).status_code == 400   # no run yet: nothing is kept
+    run_day(a, "observe")                                           # a run starts (nothing checking, so nothing waits): now rules can be kept
     saved = a.post("/api/policy", json={"policy": {**rules["policy"], "hold_payment_in_flight": False},
                                         "english": rules["english"], "sources": {}, "compiled_by": "owner"}).json()
     assert saved["policy"]["hold_payment_in_flight"] is False
@@ -161,8 +163,8 @@ def test_the_number_of_visitor_states_is_bounded(web, monkeypatch):
     monkeypatch.setattr(web, "MAX_VISITORS", 3)
     rules = web.DEFAULT_RULES
     people = [TestClient(web.app) for _ in range(5)]
-    for p in people:                                                # saving rules is the cheapest act that creates a state
-        p.get("/api/meta")                                           # load the page first: a visitor with no cookie keeps nothing
+    for p in people:                                                # a run starts the visitor; then saving rules has something to keep
+        run_day(p, "observe")
         p.post("/api/policy", json={"policy": {**rules["policy"], "split_detection": False}, "english": "", "sources": {}, "compiled_by": "owner"})
     assert len(web.VISITORS) == 3
     assert people[0].get("/api/policy").json()["policy"]["split_detection"] is True      # the oldest was dropped: back to the defaults
@@ -177,7 +179,10 @@ def test_an_idle_visitor_expires(web, monkeypatch):
     run_day(c)
     assert len(waiting(c)) == 1 and len(web.VISITORS) == 1
     monkeypatch.setattr(web, "VISITOR_IDLE_S", 0.0)
-    assert c.get("/api/holds").json() == [] and not web.VISITORS
+    assert len(c.get("/api/holds").json()) == 1 and web.VISITORS   # a payment is waiting for them: idle time does not drop them (task 21)
+    h = waiting(c)[0]
+    assert c.post("/api/decline", json={"session": h["session"], "hold_id": h["id"]}).status_code == 200
+    assert c.get("/api/holds").json() == [] and not web.VISITORS    # nothing waits any more: idle too long, forgotten
 
 
 def test_the_shared_mcp_workspace_reaches_the_phone_only_where_that_is_switched_on(clients, web, monkeypatch):
