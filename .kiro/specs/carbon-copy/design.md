@@ -9,7 +9,7 @@ One new module, `receipts/carbon.py`, holds the book and the check. `Receipts.em
 ```json
 {
   "n": 7,
-  "at": 1795462000.123,
+  "at_ms": 1795462000123,
   "kind": "verdict",
   "event": { "...": "the event exactly as emit() fired it, minus its own 't'" },
   "prev": "9f86d0…(64 hex)",
@@ -18,11 +18,11 @@ One new module, `receipts/carbon.py`, holds the book and the check. `Receipts.em
 }
 ```
 
-- `fp = sha256(canonical({"n","at","kind","event","prev"}))`
+- `fp = sha256(canonical({"n","at_ms","kind","event","prev"}))` (task 11 replaced `at` with `at_ms`; a receipt carries exactly `n, at_ms, kind, event, prev, fp, sig`)
 - `canonical(x) = json.dumps(x, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str).encode("utf-8")` (task 9 replaced `default=str` with the cleaning step below; see "The check does not trust the server")
 - `canonical()` first normalises the value: every float with no fractional part becomes an int, recursively through dicts and lists; tuples become lists; anything else JSON cannot hold goes through `str` as before. A browser writes 1836.0 as 1836, so without this the same number would give different bytes after a trip through `JSON.parse` and `JSON.stringify`.
 - `append()` stores the NORMALISED event, so what is hashed is exactly what is stored and handed out. `verify()` normalises before hashing too, so books signed before this change still check out when they hold no whole-number floats.
-- `at` is rounded to milliseconds before hashing, so the stored value and the hashed value are the same number.
+- `at_ms` is the time in whole milliseconds since the epoch, a safe integer, so the stored value and the hashed value are the same number in every JSON tool (task 11, A1; `at` in seconds was replaced).
 - The first receipt's `prev` is `"0" * 64`.
 
 A book handed out is `{"public_key": "<hex>", "head": {...}, "receipts": [...]}`. The `head` is a signed count of the book:
@@ -216,3 +216,54 @@ Lists tasks 1 to 10, says the demo is on an always-on plan, says the no-keys hoo
 
 ### Tests
 `tests/test_carbon_app.py` gains tests that read the page and the script as shipped (labels, banner, six tabs, "Start here" buttons, counter, no "vendor master", the Results line and name, the plain-word lines), that the two Kiro files parse and point at files that exist, that no Kiro file or README line holds a key, and that `python -m receipts.mcp_server` answers an MCP `initialize` over stdio. A node-run test of the marker wording is not added: the wording lives in two small pure functions (`markerTag`, `markerWords`) that the page tests read as text.
+
+
+## What our own attacker found (task 11)
+
+The custom Kiro agent `carbon-attacker` attacked the book and proved the findings below. Each has a reproduction in `scratch_attacks/` (git ignores that folder) and, since task 11, a test in `tests/` that builds the same attack and expects the check to catch it. Nothing here changes what Receipts decides.
+
+### A1. The receipt's time is cleaned like the event
+Cause: `append()` sealed `at` as a float rounded to milliseconds. An event time of `1e21` is a whole float, so Python's `normalise()` turned it into the integer `1000000000000000000000` before hashing, while JavaScript writes the same number as `1e+21`. The two checks hashed different bytes. It was reachable only by calling `append()` with such a time, not through the web app.
+
+Fix: the receipt carries `at_ms`, a whole number of milliseconds since the epoch. `_receipt_time_ms(t)` takes the event's `t` (seconds), multiplies by 1000, rounds, and accepts the result only when it is between 0 and 2^53 - 1; anything else (missing, text, NaN, a boolean, 1e21, a negative time) becomes the current time. So the sealed time is always a safe integer that every JSON tool writes the same way. The check also refuses an `at_ms` that is not such a number (`_time_ok`), even when someone with the key signed it; a whole float such as `5.0` still reads as `5`, as a browser reads it. The screen formats `at_ms` (`new Date(r.at_ms)`).
+
+Old books: a receipt from before task 11 carries `at` in seconds and no `at_ms`. Reading both would need two fingerprint recipes and two key sets in both checks, for a demo book that lives in memory for one visit. We chose the simpler course: **books from before task 11 are not readable.** They read as *changed* (the `at` key is outside the seven sealed keys, A3). The README's Limits says so.
+
+### A2. A book of the wrong shape is changed
+Cause: Python read `book.get("receipts") or []`, so `{}`, `0`, `""` and `false` became an empty book and read *intact*; the browser rejected them.
+
+Fix: both checks require the book to be an object whose `receipts` is a list. Anything else, including a missing `receipts`, is *changed* with `count` 0, `first_bad` 1 and the reason "this is not a carbon-copy book we can read".
+
+### A3. A receipt carries exactly its seal
+Cause: the fingerprint covers five fields and the signature covers the fingerprint, so a key added beside them (`"approved_by": "maya"`) changed nothing the check looked at.
+
+Fix: a receipt's keys must be a subset of `n, at_ms, kind, event, prev, fp, sig` (`SEALED_KEYS`). Any other key makes the book *changed* at that receipt with "receipt #N carries something outside its seal", where N is the receipt's position in the book. A sealed key that is missing already fails the content or signature check. At the top level the checks read only `public_key`, `head` and `receipts`; a key beside them is not read and does not change the answer, because it is not part of the book. What is shown or exported is cut to those parts: `public_book()` copies a book with only the three parts and only the seven keys in each receipt, `tamper_demo` and `forge_demo` build their copies through it, `book()` hands out exactly the three, and the screen's developer view prints a receipt's sealed keys only (`sealedOnly` in `static/app.js`).
+
+### A4. A signature has one written form
+Cause: a 64-byte signature is 88 base64 characters whose last character carries four unused bits, so 16 texts decode to the same bytes. Python's `b64decode(validate=True)` and the browser's `atob` both accept all 16.
+
+Fix: `_signature_ok` decodes, re-encodes and requires the text to equal the re-encoding (standard alphabet, padded, no spaces or line breaks). `static/carbon_verify.js` does the same with `atob` and `btoa`. The rule applies to a receipt's, the head's and every stamp's signature, and each keeps its own reason ("its signature does not match", "the book's signed count was changed", "a stamp on your device is damaged or forged").
+
+### A5. A key has one written form
+Cause: `bytes.fromhex` ignores spaces, so a key written as `"d7 5a 98 ..."` verified in Python; the browser's hex reader did not.
+
+Fix: a book's `public_key` must match `[0-9a-f]{64}` in both checks, otherwise *changed* with "its public key is not written the way a key must be". This is checked before the key the device trusts is compared. The key the device trusts may still be given in capitals; it is lower-cased before the comparison.
+
+### A6. Different values that seal the same: kept, and said so
+`298.5` and `"298.5"`, `2**60` and `"1152921504606846976"`, `Decimal("5.10")` and `"5.10"`, `NaN` and `"nan"` all clean to the same text, so they seal to the same fingerprint. That is the cleaning of design D1, which exists so that every JSON tool reproduces the bytes. It stays. The README's Limits gets one line: "Amounts that are not whole numbers are sealed as text, so the book shows the value, not whether the AI wrote it as a number or as text." A test pins the behaviour so any change is a decision.
+
+### A7. Why the attacker did not see the MCP tools
+Checked on Windows with Kiro CLI 3.5.0, against kiro.dev/docs/mcp/configuration and kiro.dev/docs/custom-agents/configuration-reference.
+
+- Location and loading are right. A workspace server lives in `<workspace>/.kiro/settings/mcp.json`, and an agent includes it with `"includeMcpJson": true`. `kiro-cli mcp list` shows `carbon-copy` under the default agent, and `kiro-cli mcp status --name carbon-copy` shows the command and a 120000 ms timeout.
+- The relative command is not the problem. Started from the workspace folder, `.venv\Scripts\python.exe -m receipts.mcp_server` connects (about 2.8 seconds as Kiro measures it, of which roughly one second is Python importing the `mcp` package) and lists the twelve tools. Replacing it with an absolute path changed nothing.
+- Cause 1: the agent file held only the newer `permissions` field, which makes it "v3-only". `kiro-cli chat --no-interactive` runs the older engine unless `--agent-engine v3` is given, and that engine answers "Mode 'carbon-attacker' not found" (`kiro-cli agent upgrade --dry-run .kiro/agents` called the file "v3-only"). Removing `permissions` made it load; so did adding the older fields.
+- Cause 2: on the newer engine in a one-shot headless run, the first turn starts before the MCP server has connected, so the first catalogue of tools is empty. The tools appear after the connect (a later turn lists all twelve).
+- Fix: the agent file is written in the form both engines load: the newer `tools` and `permissions` plus the older `allowedTools` and `toolsSettings` (shell commands as regular expressions, write paths as globs), the same limits written twice. A test checks that the two agree. The prompt tells the attacker that the carbon-copy tools can take a few seconds to connect and to look again before saying they are missing.
+- Proof: `kiro-cli mcp list` output is in the task 11 report; `kiro-cli chat --agent-engine v2 --agent carbon-attacker` lists the twelve tools and calls `receipts_holds`; a test starts the server from the command and arguments in `mcp.json`, from the workspace folder, and performs the MCP handshake. We could not see inside the attacker's own session, so we cannot say which of the two causes it hit; both reproduce its message.
+
+### A8. The attacker knows what is fixed
+The prompt lists A1 to A6 in plain words as already fixed and says to look for new shapes.
+
+### Tests
+`tests/test_carbon.py` holds the unit and property tests for A1 to A6 (every spelling of a signature, every key form, extra keys by property, event times by property). `tests/test_carbon_parity.py` builds each attack once and runs it through both checks under node, requiring the same answer and *changed* for every attack. `tests/test_carbon_app.py` holds the checks of the spec, README, agent file and the MCP start-up.

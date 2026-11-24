@@ -114,3 +114,110 @@ def test_node_names_the_right_receipt_when_the_changed_one_is_inside_the_stamped
     n = len(book["receipts"])
     got = run_node(tmp_path, [{"book": book, "stamps": [carbon.stamp()], "key": book["public_key"]}])[0]
     assert got["intact"] is False and got["first_bad"] == n and got["why"] == "its content was changed"
+
+
+# ---- task 11: the attacker's findings, answered the same way by both checks ----------------------------------------
+
+_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+
+def _attack_cases():
+    """(name, book, stamps, key, honest): each attack from the attacker's report built against a fresh honest book."""
+    signer = Signer(Ed25519PrivateKey.generate())
+    carbon = CarbonCopy(signer)
+    carbon.append("verdict", {"t": 1795462000.001, "id": "h1", "amount": 1836.0, "verdict": "HOLD"})
+    carbon.append("owner", {"t": 1795462000.002, "action": "declined", "hold_id": "h1"})
+    carbon.append("note", {"t": 1e21, "x": 1})                          # A1: an event time no tool can hold
+    carbon.append("note", {"x": 2})
+    key, stamp = signer.public_key_hex, carbon.stamp()
+    honest = json.loads(json.dumps(carbon.book(), allow_nan=False))
+    cases = [("honest", honest, [stamp], key, True), ("honest with no key pinned", honest, None, None, True)]
+
+    def variant(name, edit, pinned=(key, None)):
+        for k in pinned:
+            b = copy.deepcopy(honest)
+            edit(b)
+            cases.append((name, b, [stamp], k, False))
+
+    for junk in ({}, 0, "", False, None, "x"):                          # A2
+        variant(f"receipts is {junk!r}", lambda b, j=junk: b.__setitem__("receipts", j))
+    variant("no receipts field", lambda b: b.pop("receipts"))
+    for bad in ([], None, "book", 7):
+        cases.append((f"book is {bad!r}", bad, None, key, False))
+    variant("extra field on a receipt", lambda b: b["receipts"][1].update({"approved_by": "maya", "note": "by phone"}))   # A3
+    variant("extra field on the first receipt", lambda b: b["receipts"][0].update({"x": 1}))
+    variant("extra field beside the book", lambda b: b.update({"verdict": "approved"}))                    # allowed: not read
+    variant("a sealed key removed", lambda b: b["receipts"][2].pop("kind"))
+    sig = honest["receipts"][0]["sig"]
+    last = sig[-3]
+    base = _ALPHABET.index(last) & ~0xF
+    for k in range(16):                                                 # A4: every spelling of the first signature
+        other = sig[:-3] + _ALPHABET[base + k] + "=="
+        if other == sig:
+            continue
+        variant("receipt signature spelled " + other[-4:], lambda b, o=other: b["receipts"][0].__setitem__("sig", o))
+    head_sig = honest["head"]["sig"]
+    base = _ALPHABET.index(head_sig[-3]) & ~0xF
+    for k in range(16):
+        other = head_sig[:-3] + _ALPHABET[base + k] + "=="
+        if other == head_sig:
+            continue
+        variant("head signature spelled " + other[-4:], lambda b, o=other: b["head"].__setitem__("sig", o))
+    st_base = _ALPHABET.index(stamp["sig"][-3]) & ~0xF
+    for k in range(16):
+        other = stamp["sig"][:-3] + _ALPHABET[st_base + k] + "=="
+        cases.append(("stamp signature spelled " + other[-4:], copy.deepcopy(honest), [{**stamp, "sig": other}], key, other == stamp["sig"]))
+    variant("signature without padding", lambda b: b["receipts"][3].__setitem__("sig", b["receipts"][3]["sig"].rstrip("=")))
+    variant("signature with a newline", lambda b: b["receipts"][3].__setitem__("sig", b["receipts"][3]["sig"] + "\n"))
+    spaced = " ".join(key[i:i + 2] for i in range(0, 64, 2))
+    for bad in (spaced, key.upper(), key + "\n", key[:-2], "", None, 5):                       # A5
+        variant(f"public key {bad!r}", lambda b, v=bad: b.__setitem__("public_key", v))
+    old = copy.deepcopy(honest)                                                                 # old format
+    for r in old["receipts"]:
+        r["at"] = r.pop("at_ms") / 1000
+    cases.append(("a book from before task 11", old, None, key, False))
+    return cases
+
+
+def test_both_checks_answer_every_attack_the_same_way_and_catch_it(tmp_path):
+    cases = _attack_cases()
+    js = run_node(tmp_path, [{"book": b, "stamps": s, "key": k} for _, b, s, k, _ in cases])
+    same_spelling = 0
+    for (name, book, stamps, key, honest), got_js in zip(cases, js):
+        got_py = verify(copy.deepcopy(book), copy.deepcopy(stamps), key)
+        assert got_py == got_js, (name, got_py, got_js)
+        if name.startswith("stamp signature spelled") and honest:
+            same_spelling += 1
+        if name == "extra field beside the book":
+            assert got_py["intact"] is True, name           # outside the three parts: not read, so not an alarm
+        elif honest:
+            assert got_py["intact"] is True, (name, got_py)
+        else:
+            assert got_py["intact"] is False, (name, got_py)
+    assert same_spelling == 1                              # exactly one of the 16 stamp spellings is the real one
+
+
+def test_the_reasons_the_attacks_get_are_the_plain_ones(tmp_path):
+    cases = {c[0]: c for c in _attack_cases()}
+
+    def both(name):
+        _, book, stamps, key, _ = cases[name]
+        py = verify(copy.deepcopy(book), copy.deepcopy(stamps), key)
+        assert run_node(tmp_path, [{"book": book, "stamps": stamps, "key": key}])[0] == py
+        return py
+
+    assert both("receipts is {}")["why"] == "this is not a carbon-copy book we can read"
+    assert both("extra field on a receipt")["why"] == "receipt #2 carries something outside its seal"
+    assert both("signature without padding")["why"] == "its signature does not match"
+    assert both("public key ''")["why"] == "its public key is not written the way a key must be"
+
+
+def test_an_honest_book_with_a_huge_event_time_reads_intact_in_the_browser_too(tmp_path):
+    """A1: the attacker's false alarm, with the time now sealed as whole milliseconds."""
+    signer = Signer(Ed25519PrivateKey.generate())
+    carbon = CarbonCopy(signer)
+    for t in (1e21, 1e300, -5.0, 9007199254740.992, 1795462000.5):
+        carbon.append("note", {"t": t, "x": 1})
+    book = json.loads(json.dumps(carbon.book(), allow_nan=False))
+    out = run_node(tmp_path, [{"book": book, "stamps": [carbon.stamp()], "key": signer.public_key_hex}])[0]
+    assert out == {"intact": True, "count": 5} == verify(book, [carbon.stamp()], signer.public_key_hex)

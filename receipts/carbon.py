@@ -40,6 +40,12 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 #: The link of the first receipt: 64 zeros stand for "no receipt before this one".
 GENESIS = "0" * 64
 _HEX64 = re.compile(r"[0-9a-fA-F]{64}")
+#: A public key as the book writes it: exactly 64 lowercase hex characters, nothing else (no spaces, no capitals).
+_KEY64 = re.compile(r"[0-9a-f]{64}")
+#: The seven keys a receipt carries, and the only ones it may carry: they are the seal.
+SEALED_KEYS = frozenset({"n", "at_ms", "kind", "event", "prev", "fp", "sig"})
+#: The three keys a book is read from; anything else beside them is not part of the book.
+BOOK_KEYS = ("public_key", "head", "receipts")
 
 
 #: The largest whole number every JSON tool (a browser's included) holds exactly.
@@ -201,10 +207,10 @@ class CarbonCopy:
 
     Each receipt is::
 
-        {"n": int, "at": float, "kind": str, "event": dict,
+        {"n": int, "at_ms": int, "kind": str, "event": dict,
          "prev": str, "fp": str, "sig": str}
 
-    where ``prev`` is the previous receipt's fingerprint (64 zeros for the first),
+    where ``at_ms`` is the time in whole milliseconds since the epoch, ``prev`` is the previous receipt's fingerprint (64 zeros for the first),
     ``fp`` is this receipt's own fingerprint and ``sig`` is a signature over
     ``bytes.fromhex(fp)``. The stored ``event`` is the event exactly as passed to
     :meth:`append` minus its own ``"t"``, cleaned into safe JSON (see
@@ -219,8 +225,8 @@ class CarbonCopy:
     def append(self, kind: str, event: dict) -> dict:
         """Build, fingerprint, sign and store one receipt; return a copy of it.
 
-        The receipt's time is the event's own ``"t"`` (rounded to milliseconds so
-        the stored value and the hashed value are the same number); if the event
+        The receipt's time is the event's own ``"t"`` (seconds) as whole milliseconds
+        in ``at_ms``, a safe integer like everything else that is sealed; if the event
         carries no usable ``"t"`` the current time is used. The stored event is the
         event minus ``"t"`` cleaned by :func:`safe_json`, which is a fresh copy, so
         changing the event afterwards cannot change the book. Whatever the event
@@ -228,14 +234,14 @@ class CarbonCopy:
         so an action is never left without its receipt.
         """
         ev = safe_json({k: v for k, v in event.items() if k != "t"})
-        at = _receipt_time(event.get("t"))
+        at_ms = _receipt_time_ms(event.get("t"))
         with self._lock:
             n = len(self._receipts) + 1
             prev = self._receipts[-1]["fp"] if self._receipts else GENESIS
-            fp = fingerprint({"n": n, "at": at, "kind": safe_json(kind), "event": ev, "prev": prev})
+            fp = fingerprint({"n": n, "at_ms": at_ms, "kind": safe_json(kind), "event": ev, "prev": prev})
             receipt = {
                 "n": n,
-                "at": at,
+                "at_ms": at_ms,
                 "kind": safe_json(kind),
                 "event": ev,
                 "prev": prev,
@@ -281,19 +287,55 @@ class CarbonCopy:
         return {**self._head(), "public_key": self._signer.public_key_hex}
 
 
-def _receipt_time(t) -> float:
-    """A receipt's time: the event's ``t`` rounded to milliseconds, or now when it is missing or not a finite number."""
-    if isinstance(t, bool) or not isinstance(t, (int, float)) or not math.isfinite(t):
-        t = time.time()
-    return round(float(t), 3)
+def _receipt_time_ms(t) -> int:
+    """A receipt's time in whole milliseconds: the event's ``t`` (seconds), or now when it is missing, not a finite
+    number, or outside 0 to 2**53 - 1 milliseconds (the range every JSON tool holds exactly)."""
+    if not isinstance(t, bool) and isinstance(t, (int, float)) and math.isfinite(t):
+        try:
+            ms = round(t * 1000)
+        except (OverflowError, ValueError):
+            ms = -1
+        if 0 <= ms <= MAX_SAFE_INT:
+            return ms
+    return round(time.time() * 1000)
+
+
+def _time_ok(v) -> bool:
+    """True for a receipt time a book may hold: a whole number of milliseconds from 0 to 2**53 - 1 (5.0 reads as 5, as a browser reads it)."""
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return False
+    return math.isfinite(v) and float(v).is_integer() and 0 <= v <= MAX_SAFE_INT
+
+
+def public_book(book: dict) -> dict:
+    """A copy of ``book`` with only the three parts a book is read from (``public_key``, ``head``, ``receipts``), and in each
+    receipt only its seven sealed keys. What the screen shows and what is exported goes through here, so nothing that sits
+    outside the seal is ever shown beside it."""
+    out = {k: copy.deepcopy(book[k]) for k in BOOK_KEYS if isinstance(book, dict) and k in book}
+    if isinstance(out.get("receipts"), list):
+        out["receipts"] = [{k: v for k, v in r.items() if k in SEALED_KEYS} if isinstance(r, dict) else r
+                           for r in out["receipts"]]
+    return out
 
 
 def _signature_ok(public_key_hex: str, fp_hex: str, sig_b64: str) -> bool:
     """True only if ``sig_b64`` is a valid signature over ``bytes.fromhex(fp_hex)``
-    for the given public key. Any tampered, malformed or mismatched input is False."""
+    for the given public key. Any tampered, malformed or mismatched input is False.
+
+    The key must be exactly 64 lowercase hex characters and the signature must be canonical base64 (standard
+    alphabet, padded, and equal to the re-encoding of what it decodes to): base64 has spare bits at the end, so
+    several texts decode to one signature, and only the one the signer wrote is accepted.
+    """
     try:
+        if not isinstance(public_key_hex, str) or not _KEY64.fullmatch(public_key_hex):
+            return False
+        if not isinstance(sig_b64, str):
+            return False
+        raw = base64.b64decode(sig_b64, validate=True)
+        if base64.b64encode(raw).decode("ascii") != sig_b64:
+            return False
         pub = Ed25519PublicKey.from_public_bytes(bytes.fromhex(public_key_hex))
-        pub.verify(base64.b64decode(sig_b64, validate=True), bytes.fromhex(fp_hex))
+        pub.verify(raw, bytes.fromhex(fp_hex))
         return True
     except (ValueError, TypeError, InvalidSignature):
         # bad public key / bad hex / bad base64 / wrong length -> not a match;
@@ -304,6 +346,8 @@ def _signature_ok(public_key_hex: str, fp_hex: str, sig_b64: str) -> bool:
 WHY_KEY = "it was signed with a different key than the one your device trusts"
 WHY_STAMP_BAD = "a stamp on your device is damaged or forged"
 WHY_SHORT = "the book is shorter than a stamp your device already holds"
+WHY_UNREADABLE = "this is not a carbon-copy book we can read"
+WHY_BAD_KEY = "its public key is not written the way a key must be"
 
 
 def _changed(count: int, why: str, first_bad: int | None = None) -> dict:
@@ -342,10 +386,16 @@ def verify(book: dict, stamps=None, expected_key: str | None = None) -> dict:
     book's own key is used for every signature, which proves the book is consistent
     but not who wrote it.
 
-    Walks the receipts in order. For each it asks, in turn: is ``n`` the next
-    number; does ``prev`` equal the previous receipt's fingerprint; does the
-    recomputed fingerprint equal the stored ``fp``; does the signature verify. It
-    stops at the first receipt that fails any of these.
+    A book that is not an object holding a list in ``receipts`` is *changed* ("this is not
+    a carbon-copy book we can read"), and so is one whose ``public_key`` is not exactly 64
+    lowercase hex characters. Only ``public_key``, ``head`` and ``receipts`` are read.
+
+    Walks the receipts in order. For each it asks, in turn: does it carry only its seven
+    sealed keys (``n, at_ms, kind, event, prev, fp, sig``); is ``n`` the next
+    number; does ``prev`` equal the previous receipt's fingerprint; is ``at_ms`` a whole
+    number of milliseconds and does the recomputed fingerprint equal the stored ``fp``;
+    does the signature (canonical base64) verify. It stops at the first receipt that
+    fails any of these.
 
     Returns ``{"intact": True, "count": N}`` when every receipt checks out, or
     ``{"intact": False, "count": N, "first_bad": n, "why": "<plain words>"}``
@@ -366,12 +416,12 @@ def verify(book: dict, stamps=None, expected_key: str | None = None) -> dict:
     that exists but holds another fingerprint gives "receipt #N no longer matches the
     stamp your device kept".
     """
-    if not isinstance(book, dict):
-        return _changed(0, "this is not a carbon-copy book we can read", 1)
-    receipts = book.get("receipts") or []
-    if not isinstance(receipts, list):
-        return _changed(0, "this is not a carbon-copy book we can read", 1)
+    if not isinstance(book, dict) or not isinstance(book.get("receipts"), list):
+        return _changed(0, WHY_UNREADABLE, 1)       # any shape but an object holding a list of receipts
+    receipts = book["receipts"]
     public_key = book.get("public_key", "")
+    if not isinstance(public_key, str) or not _KEY64.fullmatch(public_key):
+        return _changed(len(receipts), WHY_BAD_KEY)
     if expected_key is not None and (
         not isinstance(public_key, str) or not isinstance(expected_key, str)
         or public_key.lower() != expected_key.lower()
@@ -381,14 +431,17 @@ def verify(book: dict, stamps=None, expected_key: str | None = None) -> dict:
     for i, r in enumerate(receipts):
         if not isinstance(r, dict):
             return _changed(len(receipts), "its content was changed", i + 1)
+        if not SEALED_KEYS.issuperset(r):           # only the seven sealed keys; anything else sits outside the seal
+            return _changed(len(receipts), f"receipt #{i + 1} carries something outside its seal", i + 1)
         n = r.get("n")
         if n != i + 1 or isinstance(n, bool):
             return _changed(len(receipts), "a receipt is missing", i + 1)
         if r.get("prev") != prev_fp:
             return _changed(len(receipts), "its link to the receipt before was broken", n)
         try:
-            content_ok = fingerprint({"n": n, "at": r.get("at"), "kind": r.get("kind"),
-                                      "event": r.get("event"), "prev": r.get("prev")}) == r.get("fp")
+            content_ok = _time_ok(r.get("at_ms")) and fingerprint(
+                {"n": n, "at_ms": r.get("at_ms"), "kind": r.get("kind"),
+                 "event": r.get("event"), "prev": r.get("prev")}) == r.get("fp")
         except (TypeError, ValueError):     # a value no honest book holds (NaN, a date): not the content that was signed
             content_ok = False
         if not content_ok:
@@ -420,7 +473,7 @@ def verify(book: dict, stamps=None, expected_key: str | None = None) -> dict:
     if stamps is not None and stamps != []:
         if not isinstance(stamps, list):
             return _changed(len(receipts), WHY_STAMP_BAD)
-        key = expected_key if expected_key is not None else public_key
+        key = expected_key.lower() if isinstance(expected_key, str) else public_key
         if not all(_stamp_ok(s, key) for s in stamps):
             return _changed(len(receipts), WHY_STAMP_BAD)
         n = len(receipts)
@@ -499,7 +552,7 @@ def _change_one(book: dict, n: int | None = None) -> tuple[dict, dict]:
     Which receipt and which value is explained in :func:`tamper_demo`. The book passed in is never modified.
     Returns ``(copy, {"n", "field", "before", "after", "say"})``; ``n`` is None when the book has no receipts.
     """
-    work = copy.deepcopy(book)
+    work = public_book(book)
     receipts = work.get("receipts") or []
     if not receipts:
         return work, {"n": None, "field": None, "before": None, "after": None, "say": None}
@@ -556,7 +609,7 @@ def forge_demo(book: dict, n: int | None = None) -> dict:
     prev = GENESIS
     for r in work["receipts"]:
         r["prev"] = prev
-        r["fp"] = fingerprint({"n": r.get("n"), "at": r.get("at"), "kind": r.get("kind"),
+        r["fp"] = fingerprint({"n": r.get("n"), "at_ms": r.get("at_ms"), "kind": r.get("kind"),
                                "event": r.get("event"), "prev": prev})
         r["sig"] = signer.sign(r["fp"])
         prev = r["fp"]

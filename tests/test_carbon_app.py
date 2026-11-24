@@ -420,7 +420,7 @@ def test_the_mcp_server_starts_over_stdio_and_lists_its_tools():
 def test_readme_is_in_line_with_task_10():
     assert "Category: (to be confirmed)" in README and "Session records:** docs/kiro-sessions/" in README
     assert "always-on plan" in README and "free plan" not in README
-    assert "after each save" in README and "tasks 1 to 10" in README.lower() or "(tasks 1 to 10)" in README
+    assert "after each save" in README and "tasks 1 to 11" in README.lower() or "(tasks 1 to 11)" in README
     section = README[README.index("## How Kiro built it"):README.index("## Limits we know about")]
     for word in ("Kiro CLI, headless", "Spec-driven", "Steering", "Hooks", "Property-based", "MCP", "Custom agent", "Powers", "None were used"):
         assert word in section, word
@@ -437,3 +437,125 @@ def test_spec_carries_requirement_10_and_task_10():
 def test_the_page_loads_with_the_new_strip(client):
     page = client.get("/").text
     assert 'id="startHere"' in page and "What Receipts measured" in page
+
+
+# ---- task 11: what our own attacker found --------------------------------------------------------------------------
+
+def _agent():
+    return json.loads((ROOT / ".kiro" / "agents" / "carbon-attacker.json").read_text(encoding="utf-8"))
+
+
+def test_the_book_the_app_hands_out_has_at_ms_and_only_sealed_keys(client):
+    from receipts.carbon import SEALED_KEYS, verify as py_verify
+    replay(client)
+    book = client.get("/api/carbon").json()
+    assert book["receipts"] and all(set(r) == set(SEALED_KEYS) for r in book["receipts"])
+    assert all(isinstance(r["at_ms"], int) and r["at_ms"] > 1_000_000_000_000 for r in book["receipts"])
+    parts = {k: book[k] for k in ("public_key", "head", "receipts")}
+    assert py_verify(parts, None, client.get("/api/carbon/key").json()["public_key"])["intact"] is True
+
+
+def test_the_screen_formats_at_ms_and_shows_only_sealed_keys():
+    assert "new Date(r.at_ms)" in JS and "r.at * 1000" not in JS
+    assert 'const SEALED_KEYS = ["n", "at_ms", "kind", "event", "prev", "fp", "sig"]' in JS
+    assert "JSON.stringify(sealedOnly(r), null, 2)" in JS
+    assert "bookParts" in JS and "book: { public_key: CC.public_key, head: CC.head, receipts: CC.receipts }" in JS
+
+
+def test_the_server_check_answers_the_wrong_shapes_as_changed(client):
+    from receipts.carbon import WHY_BAD_KEY
+    for junk in ({}, 0, "", False, None):
+        out = client.post("/api/carbon/verify", json={"book": {"public_key": "a" * 64, "head": None, "receipts": junk}}).json()
+        assert out == {"intact": False, "count": 0, "first_bad": 1, "why": "this is not a carbon-copy book we can read"}
+    out = client.post("/api/carbon/verify", json={"book": {"public_key": "A B", "head": None, "receipts": []}}).json()
+    assert out == {"intact": False, "count": 0, "why": WHY_BAD_KEY}
+
+
+def test_kiro_starts_the_mcp_server_from_mcp_json_the_way_this_test_does():
+    """A7: the command and arguments in .kiro/settings/mcp.json, started from the workspace folder (where Kiro starts
+    a workspace server), answer the MCP handshake well inside Kiro's 120000 ms default and list the tools the agent names."""
+    import threading
+    import time
+    cfg = json.loads((ROOT / ".kiro" / "settings" / "mcp.json").read_text(encoding="utf-8"))
+    srv = cfg["mcpServers"]["carbon-copy"]
+    command = ROOT / Path(srv["command"].replace("\\", "/"))
+    if not command.exists():
+        pytest.skip("the project's virtual environment is not at the path mcp.json names on this machine")
+    env = {**os.environ, **srv.get("env", {})}
+    env.pop("CARBON_COPY_KEY", None)                          # no key is ever needed to start it
+    started = time.monotonic()
+    proc = subprocess.Popen([str(command), *srv["args"]], cwd=ROOT, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                            stderr=subprocess.DEVNULL, text=True, encoding="utf-8")
+    watchdog = threading.Timer(90, proc.kill)
+    watchdog.start()
+    try:
+        def ask(msg):
+            proc.stdin.write(json.dumps(msg) + "\n")
+            proc.stdin.flush()
+            line = proc.stdout.readline()
+            assert line, "the server closed before it answered"
+            return json.loads(line)                           # standard output holds the protocol and nothing else
+        init = ask({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+            "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "kiro-like", "version": "1"}}})
+        connected_in = time.monotonic() - started
+        proc.stdin.write(json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}) + "\n")
+        names = {t["name"] for t in ask({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})["result"]["tools"]}
+    finally:
+        watchdog.cancel()
+        proc.kill()
+    assert "result" in init and connected_in < 60
+    assert {"accept_dispute_claim", "create_payout", "create_refund", "get_dispute", "get_order", "get_shipment_tracking",
+            "list_recent_orders", "list_transactions", "list_vendors", "payments_book", "receipts_holds",
+            "update_vendor_payee"} <= names
+
+
+def test_the_attacker_agent_loads_in_both_kiro_engines_and_says_the_same_in_each():
+    agent = _agent()
+    assert agent["includeMcpJson"] is True and "@carbon-copy" in agent["tools"]            # the newer engine
+    assert "@carbon-copy" in agent["allowedTools"] and "toolsSettings" in agent             # the older, headless one
+    rules = agent["permissions"]["rules"]
+    shell = agent["toolsSettings"]["shell"]
+    for rule in (r for r in rules if r["capability"] == "shell"):
+        patterns = shell["allowedCommands" if rule["effect"] == "allow" else "deniedCommands"]
+        for glob in rule["match"]:
+            example = glob.replace("*", "example")
+            assert any(re.fullmatch(p, example) for p in patterns), (glob, patterns)       # the regex form covers the glob form
+    assert len(shell["allowedCommands"]) == len([m for r in rules if r["capability"] == "shell" and r["effect"] == "allow" for m in r["match"]])
+    assert len(shell["deniedCommands"]) == len([m for r in rules if r["capability"] == "shell" and r["effect"] == "deny" for m in r["match"]])
+    write_allow = [m for r in rules if r["capability"] == "fs_write" and r["effect"] == "allow" for m in r["match"]]
+    write_deny = [m for r in rules if r["capability"] == "fs_write" and r["effect"] == "deny" for m in r["match"]]
+    assert agent["toolsSettings"]["fs_write"] == {"allowedPaths": write_allow, "deniedPaths": write_deny}
+    assert not re.search(r"[0-9a-fA-F]{64}", json.dumps(agent))
+
+
+def test_the_attacker_prompt_names_the_six_fixed_findings_and_the_slow_connect():
+    prompt = _agent()["prompt"]
+    assert "ALREADY FIXED" in prompt and "look for NEW shapes" in prompt
+    for token in ("(A1)", "(A2)", "(A3)", "(A4)", "(A5)", "(A6)", "at_ms", "approved_by", "canonical base64", "64 lowercase hex", "298.5"):
+        assert token in prompt, token
+    assert "(A7)" not in prompt and "(A8)" not in prompt
+    assert "a few seconds to connect" in prompt
+
+
+def test_spec_carries_requirement_11_and_task_11():
+    reqs = (SPEC / "requirements.md").read_text(encoding="utf-8")
+    assert "### Requirement 11: what our own attacker found" in reqs
+    for n in range(1, 9):
+        assert re.search(rf"^{n}\. [A-Z ,'-]+\(A{n}\)", reqs[reqs.index("### Requirement 11"):], re.M), n
+    tasks = (SPEC / "tasks.md").read_text(encoding="utf-8")
+    assert "- [x] 11. What our own attacker found" in tasks and "11.10" in tasks
+    design = (SPEC / "design.md").read_text(encoding="utf-8")
+    assert "## What our own attacker found (task 11)" in design
+    for name in ("A1.", "A2.", "A3.", "A4.", "A5.", "A6.", "A7.", "A8."):
+        assert f"### {name}" in design, name
+    assert "books from before task 11 are not readable" in design
+
+
+def test_readme_is_in_line_with_task_11():
+    assert "Amounts that are not whole numbers are sealed as text, so the book shows the value, not whether the AI wrote it as a number or as text." in README
+    assert "tasks 1 to 11" in README and "11 requirements" in README
+    section = README[README.index("## How Kiro built it"):README.index("## Limits we know about")]
+    assert "kiro-cli mcp list" in section and "Mode 'carbon-attacker' not found" in section
+    assert "aren't available to me" in section
+    assert '"at": at' not in README and '"at_ms": at_ms' in README
+    assert not re.search(r"[0-9a-fA-F]{64}", README)

@@ -146,7 +146,8 @@ def test_append_strips_the_events_own_t_and_rounds_its_time_to_milliseconds():
     carbon.append("verdict", {"t": 1795462000.123456, "x": 1})
     rec = carbon.receipts()[0]
     assert "t" not in rec["event"]          # the event's own t is gone
-    assert rec["at"] == 1795462000.123       # rounded to milliseconds
+    assert rec["at_ms"] == 1795462000123     # whole milliseconds, rounded; there is no "at" any more
+    assert "at" not in rec
     assert rec["event"]["x"] == 1
 
 
@@ -409,7 +410,7 @@ def _new_value_for(field, old):
     """A strategy for a replacement value of one receipt field that differs from ``old``."""
     if field == "n":
         return st.integers(min_value=1, max_value=1000)
-    if field == "at":
+    if field == "at_ms":
         return st.floats(allow_nan=False, allow_infinity=False)
     if field == "kind":
         return st.text(min_size=1, max_size=10)
@@ -425,7 +426,7 @@ def _book_one_field_and_new_value(draw):
     pairs = draw(st.lists(st.tuples(st.sampled_from(KINDS), _EVENTS), min_size=1, max_size=8))
     book = _book(*pairs)
     k = draw(st.integers(min_value=0, max_value=len(book["receipts"]) - 1))
-    field = draw(st.sampled_from(["n", "at", "kind", "event", "prev", "fp", "sig"]))
+    field = draw(st.sampled_from(["n", "at_ms", "kind", "event", "prev", "fp", "sig"]))
     old = book["receipts"][k][field]
     new = draw(_new_value_for(field, old))
     assume(new != old)        # a real change, not a no-op
@@ -901,7 +902,7 @@ def test_a_time_that_is_not_a_finite_number_falls_back_to_now():
     carbon = CarbonCopy(_signer())
     for bad in (float("nan"), float("inf"), "later", None, True):
         r = carbon.append("verdict", {"t": bad, "amount": 1})
-        assert math.isfinite(r["at"]) and r["at"] > 1_000_000_000
+        assert isinstance(r["at_ms"], int) and r["at_ms"] > 1_000_000_000_000
 
 
 @pytest.mark.parametrize("number", [9007199254740993, 2 ** 60, float(2 ** 60), 2 ** 53, -(2 ** 63), 298.5, 1e-7, 1e22])
@@ -939,7 +940,7 @@ def test_the_fingerprint_recipe_is_the_plain_one_anyone_can_redo():
     carbon = CarbonCopy(_signer())
     r = carbon.append("say", {"t": 1795462000.001, "text": "café 😀", "n": 7, "ok": True, "none": None, "list": [1, ["x"]],
                               "\U00010000": "astral", "\uffff": "bmp"})
-    payload = {"n": r["n"], "at": r["at"], "kind": r["kind"], "event": r["event"], "prev": r["prev"]}
+    payload = {"n": r["n"], "at_ms": r["at_ms"], "kind": r["kind"], "event": r["event"], "prev": r["prev"]}
     text = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     assert hashlib.sha256(text.encode("utf-8")).hexdigest() == r["fp"]
 
@@ -1077,7 +1078,7 @@ def test_a_changed_receipt_inside_the_stamped_part_is_named_for_what_it_is():
     # (someone who holds the key): every receipt is valid, the stamp no longer matches
     rewritten = CarbonCopy(signer)
     for i, r in enumerate(recs):
-        rewritten.append(r["kind"], {"t": r["at"], **({"amount": 999} if i == 2 else r["event"])})
+        rewritten.append(r["kind"], {"t": r["at_ms"] / 1000, **({"amount": 999} if i == 2 else r["event"])})
     book = rewritten.book()
     assert verify(book) == {"intact": True, "count": 5}
     out = verify(book, stamps=[stamp3])
@@ -1169,3 +1170,264 @@ def test_cli_stamps_with_a_forged_signature_exit_one(tmp_path):
     sp.write_text(json.dumps([{**carbon.stamp(), "sig": "AAAA"}]), encoding="utf-8")
     done = _run_cli(bp, sp)
     assert done.returncode == 1 and WHY_BAD_STAMP in done.stdout
+
+
+# ---- task 11: what our own attacker found (A1 to A5) ---------------------------------------------------------------
+# Each test below is the attacker's reproduction turned round: the attack is built and the check must now catch it.
+
+import math  # noqa: E402
+import time  # noqa: E402
+
+import pytest  # noqa: E402
+
+from receipts import carbon as _carbon_module  # noqa: E402
+from receipts.carbon import (  # noqa: E402
+    MAX_SAFE_INT,
+    SEALED_KEYS,
+    WHY_BAD_KEY,
+    WHY_STAMP_BAD,
+    WHY_UNREADABLE,
+    forge_demo,
+    public_book,
+)
+
+_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+
+def _honest(n_events: int = 4):
+    """(signer, carbon): a few receipts written through the public API, under a throwaway in-memory key."""
+    signer = _signer()
+    carbon = CarbonCopy(signer)
+    carbon.append("verdict", {"t": 1795462000.001, "id": "h1", "amount": 1836.0, "verdict": "HOLD"})
+    carbon.append("owner", {"t": 1795462000.002, "action": "declined", "hold_id": "h1"})
+    for i in range(n_events - 2):
+        carbon.append("note", {"t": 1795462000.003 + i, "i": i})
+    return signer, carbon
+
+
+def _other_spellings(sig: str) -> list:
+    """Every other base64 text that decodes to the same 64 bytes: the spare bits of the last character vary."""
+    assert sig.endswith("==")
+    last = sig[-3]
+    base = _ALPHABET.index(last) & ~0xF
+    return [sig[:-3] + _ALPHABET[base + k] + "==" for k in range(16) if _ALPHABET[base + k] != last]
+
+
+# A1: the receipt's time ----------------------------------------------------------------------------------------
+
+def test_a_receipt_seals_its_time_as_whole_milliseconds_in_at_ms():
+    r = CarbonCopy(_signer()).append("note", {"t": 1795462000.1234, "x": 1})
+    assert set(r) == set(SEALED_KEYS)                       # exactly the seven sealed keys; no "at"
+    assert r["at_ms"] == 1795462000123 and isinstance(r["at_ms"], int)
+
+
+def test_a_huge_event_time_cannot_make_the_two_checks_disagree():
+    """A1: t = 1e21 used to be sealed as a float that Python wrote as an integer and a browser wrote as 1e+21."""
+    signer = _signer()
+    carbon = CarbonCopy(signer)
+    r = carbon.append("note", {"t": 1e21, "x": 1})
+    carbon.append("note", {"x": 2})
+    assert isinstance(r["at_ms"], int) and 0 <= r["at_ms"] <= MAX_SAFE_INT
+    assert abs(r["at_ms"] - time.time() * 1000) < 60_000    # a time that cannot be held is replaced by now
+    book = json.loads(json.dumps(carbon.book(), allow_nan=False))
+    assert verify(book, [carbon.stamp()], signer.public_key_hex) == {"intact": True, "count": 2}
+    assert "e+" not in json.dumps(carbon.book()["receipts"][0]["at_ms"])
+
+
+@given(t=st.one_of(st.floats(), st.integers(), st.text(), st.none(), st.booleans()))
+@settings(max_examples=150, deadline=None)
+def test_property_whatever_the_event_time_is_the_receipt_time_is_a_safe_whole_number(t):
+    carbon = CarbonCopy(_signer())
+    r = carbon.append("note", {"t": t})
+    assert isinstance(r["at_ms"], int) and not isinstance(r["at_ms"], bool) and 0 <= r["at_ms"] <= MAX_SAFE_INT
+    assert verify(json.loads(json.dumps(carbon.book(), allow_nan=False))) == {"intact": True, "count": 1}
+
+
+def test_the_times_a_book_may_hold():
+    ok = _carbon_module._time_ok
+    assert ok(0) and ok(1795462000123) and ok(MAX_SAFE_INT) and ok(5.0)
+    for bad in (-1, MAX_SAFE_INT + 1, 1e21, 1.5, float("nan"), float("inf"), True, "5", None, [5]):
+        assert not ok(bad), bad
+
+
+def test_a_book_written_before_task_11_is_not_readable():
+    """Receipts that carry "at" (seconds) are from the old book format: changed, not quietly read."""
+    signer = _signer()
+    receipts, prev = [], GENESIS
+    for n, ev in enumerate(({"a": 1}, {"b": 2}), start=1):
+        fp = fingerprint({"n": n, "at": 1795462000.5, "kind": "note", "event": ev, "prev": prev})
+        receipts.append({"n": n, "at": 1795462000.5, "kind": "note", "event": ev, "prev": prev, "fp": fp, "sig": signer.sign(fp)})
+        prev = fp
+    head = {"count": 2, "last_fp": prev, "sig": signer.sign(fingerprint({"count": 2, "last_fp": prev}))}
+    out = verify({"public_key": signer.public_key_hex, "head": head, "receipts": receipts})
+    assert out["intact"] is False and out["first_bad"] == 1
+
+
+def test_a_time_that_is_not_whole_milliseconds_is_changed_even_when_resigned():
+    """Someone with the key seals a time no two tools write the same way: the check refuses it."""
+    signer = _signer()
+    for bad in (1.5, -1, True, "7", MAX_SAFE_INT + 1):
+        fp = fingerprint({"n": 1, "at_ms": bad, "kind": "note", "event": {}, "prev": GENESIS})
+        r = {"n": 1, "at_ms": bad, "kind": "note", "event": {}, "prev": GENESIS, "fp": fp, "sig": signer.sign(fp)}
+        head = {"count": 1, "last_fp": fp, "sig": signer.sign(fingerprint({"count": 1, "last_fp": fp}))}
+        out = verify({"public_key": signer.public_key_hex, "head": head, "receipts": [r]})
+        assert out == {"intact": False, "count": 1, "first_bad": 1, "why": "its content was changed"}, bad
+
+
+# A2: a book of the wrong shape ---------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("junk", [{}, 0, "", False, None, "x", 5, {"0": {}}])
+def test_a_receipts_field_that_is_not_a_list_is_changed_not_an_empty_book(junk):
+    signer, _ = _honest()
+    book = CarbonCopy(signer).book()
+    book["receipts"] = junk
+    assert verify(book, None, signer.public_key_hex) == {"intact": False, "count": 0, "first_bad": 1, "why": WHY_UNREADABLE}
+    assert WHY_UNREADABLE == "this is not a carbon-copy book we can read"
+
+
+def test_a_book_with_no_receipts_field_or_that_is_not_an_object_is_changed():
+    signer = _signer()
+    book = CarbonCopy(signer).book()
+    del book["receipts"]
+    for bad in (book, [], "book", None, 7, [book]):
+        out = verify(bad)
+        assert out["intact"] is False and out["why"] == WHY_UNREADABLE
+
+
+def test_an_empty_honest_book_is_still_intact():
+    signer = _signer()
+    assert verify(CarbonCopy(signer).book(), None, signer.public_key_hex) == {"intact": True, "count": 0}
+
+
+# A3: nothing outside the seal ----------------------------------------------------------------------------------
+
+def test_a_field_added_to_a_receipt_outside_its_seal_is_changed_at_that_receipt():
+    signer, carbon = _honest()
+    stamp = carbon.stamp()
+    for k in range(1, 5):
+        book = carbon.book()
+        book["receipts"][k - 1]["approved_by"] = "maya"
+        book["receipts"][k - 1]["note"] = "Maya approved this by phone"
+        out = verify(book, [stamp], signer.public_key_hex)
+        assert out == {"intact": False, "count": 4, "first_bad": k, "why": f"receipt #{k} carries something outside its seal"}
+
+
+@given(extra=st.text(min_size=1, max_size=12).filter(lambda k: k not in SEALED_KEYS), value=st.one_of(st.text(), st.integers(), st.none()))
+@settings(max_examples=60, deadline=None)
+def test_property_any_extra_key_on_any_receipt_is_caught(extra, value):
+    signer, carbon = _honest(3)
+    book = carbon.book()
+    book["receipts"][1][extra] = value
+    out = verify(book)
+    assert out["intact"] is False and out["first_bad"] == 2 and "outside its seal" in out["why"]
+
+
+def test_a_receipt_with_a_missing_sealed_key_is_still_changed():
+    signer, carbon = _honest()
+    for key in SEALED_KEYS:
+        book = carbon.book()
+        del book["receipts"][0][key]
+        assert verify(book)["intact"] is False, key
+
+
+def test_the_check_reads_only_the_three_parts_of_a_book_and_the_book_shown_has_only_those():
+    signer, carbon = _honest()
+    book = carbon.book()
+    book["verdict"] = "approved"                         # beside the book, not in it: read by nobody
+    book["receipts"][0]["approved_by"] = "maya"
+    assert set(carbon.book()) == {"public_key", "head", "receipts"}
+    shown = public_book(book)
+    assert set(shown) == {"public_key", "head", "receipts"}
+    assert all(set(r) <= SEALED_KEYS for r in shown["receipts"])
+    top_only = carbon.book()
+    top_only["verdict"] = "approved"
+    assert verify(top_only, [carbon.stamp()], signer.public_key_hex) == {"intact": True, "count": 4}
+    assert book["receipts"][0]["approved_by"] == "maya"  # public_book copies; it never edits what it is given
+
+
+def test_the_demos_hand_back_a_book_of_only_the_three_parts():
+    signer, carbon = _honest()
+    book = carbon.book()
+    book["verdict"] = "approved"
+    book["receipts"][1]["note"] = "by phone"
+    forged = forge_demo(book)["book"]
+    assert set(forged) == {"public_key", "head", "receipts"} and all(set(r) <= SEALED_KEYS for r in forged["receipts"])
+    assert verify(forged)["intact"] is True              # re-signed under its own key, so only the pinned key refuses it
+    assert verify(forged, None, signer.public_key_hex)["why"].startswith("it was signed with a different key")
+    assert tamper_demo(book)["result"]["intact"] is False
+
+
+# A4: one written form for a signature --------------------------------------------------------------------------
+
+def test_only_the_canonical_spelling_of_a_receipts_signature_is_accepted():
+    signer, carbon = _honest()
+    stamp = carbon.stamp()
+    sig = carbon.book()["receipts"][0]["sig"]
+    spellings = _other_spellings(sig)
+    assert len(spellings) == 15
+    for other in spellings:
+        book = carbon.book()
+        assert base64.b64decode(other, validate=True) == base64.b64decode(sig, validate=True)     # same bytes, other text
+        book["receipts"][0]["sig"] = other
+        assert verify(book, [stamp], signer.public_key_hex) == {"intact": False, "count": 4, "first_bad": 1,
+                                                                 "why": "its signature does not match"}
+    assert verify(carbon.book(), [stamp], signer.public_key_hex) == {"intact": True, "count": 4}
+
+
+def test_signatures_in_any_other_written_form_are_refused():
+    signer, carbon = _honest()
+    sig = carbon.book()["receipts"][2]["sig"]
+    raw = base64.b64decode(sig)
+    forms = [sig.rstrip("="), sig + "\n", " " + sig, sig[:40] + "\n" + sig[40:], base64.urlsafe_b64encode(raw).decode(),
+             sig.replace("=", ""), sig + "====", sig.lower() if sig.lower() != sig else sig + "A", "", 7, None, ["x"]]
+    forms = [f for f in forms if f != sig]
+    for form in forms:
+        book = carbon.book()
+        book["receipts"][2]["sig"] = form
+        out = verify(book)
+        assert out["intact"] is False and out["first_bad"] == 3, form
+
+
+def test_the_signed_count_and_every_stamp_need_the_canonical_spelling_too():
+    signer, carbon = _honest()
+    stamp = carbon.stamp()
+    for other in _other_spellings(carbon.book()["head"]["sig"]):
+        book = carbon.book()
+        book["head"]["sig"] = other
+        assert verify(book) == {"intact": False, "count": 4, "why": "the book's signed count was changed"}
+    for other in _other_spellings(stamp["sig"]):
+        out = verify(carbon.book(), [{**stamp, "sig": other}], signer.public_key_hex)
+        assert out == {"intact": False, "count": 4, "why": WHY_STAMP_BAD}
+
+
+# A5: one written form for a key --------------------------------------------------------------------------------
+
+def test_a_public_key_must_be_exactly_64_lowercase_hex_characters():
+    signer, carbon = _honest()
+    good = signer.public_key_hex
+    spaced = " ".join(good[i:i + 2] for i in range(0, 64, 2))
+    for bad in (spaced, good.upper(), good + "\n", " " + good, good[:-2], good + "00", "", None, 5, ["x"], "g" * 64, good[:32] + " " + good[32:]):
+        book = carbon.book()
+        book["public_key"] = bad
+        for expected in (None, good):
+            out = verify(book, None, expected)
+            assert out == {"intact": False, "count": 4, "why": WHY_BAD_KEY}, (bad, expected)
+    assert verify(carbon.book()) == {"intact": True, "count": 4}
+
+
+def test_the_key_a_device_trusts_may_still_be_given_in_capitals():
+    signer, carbon = _honest()
+    assert verify(carbon.book(), [carbon.stamp()], signer.public_key_hex.upper()) == {"intact": True, "count": 4}
+
+
+# A6 and the cleaning that stays ----------------------------------------------------------------------------------
+
+def test_values_that_clean_to_the_same_text_still_seal_the_same():
+    """A6: documented in the README's Limits, kept on purpose. This pins the behaviour so a change is a decision."""
+    import decimal
+    signer = _signer()
+    for a, b in (({"amount": 298.5}, {"amount": "298.5"}), ({"amount": 2 ** 60}, {"amount": str(2 ** 60)}),
+                 ({"amount": decimal.Decimal("5.10")}, {"amount": "5.10"}), ({"amount": float("nan")}, {"amount": "nan"})):
+        r1 = CarbonCopy(signer).append("pay", {**a, "t": 1.0})
+        r2 = CarbonCopy(signer).append("pay", {**b, "t": 1.0})
+        assert r1["fp"] == r2["fp"]

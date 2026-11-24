@@ -4,7 +4,7 @@
  * words, using only the book, the stamps this device kept and the key this device trusts. It never asks the
  * server. SHA-256 and Ed25519 come from crypto.subtle.
  *
- * The fingerprint recipe: SHA-256 over the UTF-8 bytes of the receipt's {n, at, kind, event, prev} written as JSON
+ * The fingerprint recipe: SHA-256 over the UTF-8 bytes of the receipt's {n, at_ms, kind, event, prev} written as JSON
  * with keys sorted by Unicode code point, no spaces, and text kept as UTF-8. A book holds only strings, safe
  * integers, booleans, null, lists and objects (the server cleans everything else before it writes a receipt), so
  * JSON.stringify of each piece gives the bytes Python gives.
@@ -15,6 +15,10 @@
   const WHY_KEY = "it was signed with a different key than the one your device trusts";
   const WHY_STAMP_BAD = "a stamp on your device is damaged or forged";
   const WHY_SHORT = "the book is shorter than a stamp your device already holds";
+  const WHY_UNREADABLE = "this is not a carbon-copy book we can read";
+  const WHY_BAD_KEY = "its public key is not written the way a key must be";
+  const SEALED = new Set(["n", "at_ms", "kind", "event", "prev", "fp", "sig"]);   // the seven keys a receipt carries, and no others
+  const KEY64 = /^[0-9a-f]{64}$/;                    // a public key: exactly 64 lowercase hex characters
   const subtle = () => (root.crypto && root.crypto.subtle) || null;
   const enc = new TextEncoder();
 
@@ -48,9 +52,10 @@
     if (typeof h !== "string" || !/^([0-9a-fA-F]{2})*$/.test(h)) throw new Error("not hex");
     return Uint8Array.from(h.match(/../g) || [], (p) => parseInt(p, 16));
   };
-  const fromBase64 = (s) => {
+  const fromBase64 = (s) => {                      // canonical base64 only: the text must be what re-encoding the bytes gives
     if (typeof s !== "string" || !/^[A-Za-z0-9+/]*={0,2}$/.test(s) || s.length % 4) throw new Error("not base64");
     const bin = atob(s);
+    if (btoa(bin) !== s) throw new Error("not the canonical spelling");
     return Uint8Array.from(bin, (c) => c.charCodeAt(0));
   };
 
@@ -60,6 +65,7 @@
 
   async function signatureOk(keyHex, fpHex, sigB64) {
     try {
+      if (typeof keyHex !== "string" || !KEY64.test(keyHex)) return false;
       const key = await subtle().importKey("raw", fromHex(keyHex), { name: "Ed25519" }, false, ["verify"]);
       return await subtle().verify({ name: "Ed25519" }, key, fromBase64(sigB64), fromHex(fpHex));
     } catch (e) { return false; }
@@ -82,6 +88,7 @@
   };
   const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
   const isWhole = (v) => typeof v === "number" && Number.isInteger(v);
+  const timeOk = (v) => typeof v === "number" && Number.isSafeInteger(v) && v >= 0;   // whole milliseconds from 0 to 2^53 - 1
 
   async function stampOk(stamp, keyHex) {
     if (!isObj(stamp)) return false;
@@ -91,20 +98,22 @@
   }
 
   async function verify(book, stamps, pinnedKey) {
-    if (!isObj(book) || !(book.receipts == null || Array.isArray(book.receipts))) return changed(0, "this is not a carbon-copy book we can read", 1);
-    const receipts = book.receipts || [];
-    const publicKey = typeof book.public_key === "string" ? book.public_key : "";
+    if (!isObj(book) || !Array.isArray(book.receipts)) return changed(0, WHY_UNREADABLE, 1);   // any shape but an object holding a list of receipts
+    const receipts = book.receipts;
     const count = receipts.length;
+    const publicKey = book.public_key;
+    if (typeof publicKey !== "string" || !KEY64.test(publicKey)) return changed(count, WHY_BAD_KEY);
     if (pinnedKey != null && (typeof pinnedKey !== "string" || publicKey.toLowerCase() !== pinnedKey.toLowerCase())) return changed(count, WHY_KEY);
     let prev = GENESIS;
     for (let i = 0; i < count; i++) {
       const r = receipts[i];
       if (!isObj(r)) return changed(count, "its content was changed", i + 1);
+      if (Object.keys(r).some((k) => !SEALED.has(k))) return changed(count, `receipt #${i + 1} carries something outside its seal`, i + 1);
       const n = r.n;
       if (n !== i + 1) return changed(count, "a receipt is missing", i + 1);
       if (r.prev !== prev) return changed(count, "its link to the receipt before was broken", n);
       let contentOk = false;
-      try { contentOk = (await fingerprint({ n, at: r.at, kind: r.kind, event: r.event, prev: r.prev })) === r.fp; } catch (e) { contentOk = false; }
+      try { contentOk = timeOk(r.at_ms) && (await fingerprint({ n, at_ms: r.at_ms, kind: r.kind, event: r.event, prev: r.prev })) === r.fp; } catch (e) { contentOk = false; }
       if (!contentOk) return changed(count, "its content was changed", n);
       if (!(await signatureOk(publicKey, r.fp, r.sig))) return changed(count, "its signature does not match", n);
       prev = r.fp;

@@ -68,3 +68,17 @@
   - [x] 10.10 README brought in line
   - [x] 10.11 Tests for what changed; full run; start the app on the stand-in and load `/`
   - _Requirements: 10_
+
+
+- [x] 11. What our own attacker found (findings A1 to A8 from the `carbon-attacker` agent)
+  - [x] 11.1 Spec first: Requirement 11, design section "What our own attacker found", these tasks
+  - [x] 11.2 A1: `at_ms` (whole milliseconds, cleaned), sealed in place of `at`; the screen formats it; old books are not readable
+  - [x] 11.3 A2: a book whose shape is wrong is *changed* in both checks
+  - [x] 11.4 A3: a receipt carries exactly its seven keys; the checks read only `public_key`, `head`, `receipts`; the screen and exports show only those
+  - [x] 11.5 A4: canonical base64 for every signature, in Python and in `static/carbon_verify.js`
+  - [x] 11.6 A5: a key is exactly 64 lowercase hex characters in both checks
+  - [x] 11.7 A6: one line in the README's Limits
+  - [x] 11.8 A7: find why Kiro did not load the MCP server, fix it, run `kiro-cli mcp list`, add a test that starts the server the way Kiro does, and write the truth in "How Kiro built it"
+  - [x] 11.9 A8: the attacker's prompt names A1 to A6 as fixed
+  - [x] 11.10 Tests in `tests/` for every fix; the full run; every file in `scratch_attacks/` run and reported
+  - _Requirements: 11_

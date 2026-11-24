@@ -531,8 +531,8 @@ function drawCarbon() {
   $("#ccSub").textContent = `${CC.receipts.length} receipts from ${which} (a ${CC.source}). PayPal here: ${mode}.`;
   const dev = $("#ccDev").checked;
   box.innerHTML = CC.receipts.map((r) => dev
-    ? `<div class="cc-row"><pre class="cc-json">${esc(JSON.stringify(r, null, 2))}</pre></div>`
-    : `<div class="cc-row"><div class="cc-line">${esc(ccSentence(r))}</div><div class="cc-meta">Receipt #${r.n} · ${esc(new Date(r.at * 1000).toLocaleTimeString())} · fingerprint ${esc(String(r.fp).slice(0, 10))}</div></div>`).join("");
+    ? `<div class="cc-row"><pre class="cc-json">${esc(JSON.stringify(sealedOnly(r), null, 2))}</pre></div>`
+    : `<div class="cc-row"><div class="cc-line">${esc(ccSentence(r))}</div><div class="cc-meta">Receipt #${r.n} · ${esc(new Date(r.at_ms).toLocaleTimeString())} · fingerprint ${esc(String(r.fp).slice(0, 10))}</div></div>`).join("");
 }
 async function loadCarbon() {
   try {
@@ -543,6 +543,12 @@ async function loadCarbon() {
     CC = b;
   } catch { return; }
   drawCarbon();
+}
+const SEALED_KEYS = ["n", "at_ms", "kind", "event", "prev", "fp", "sig"];
+function sealedOnly(r) {                          // the screen shows a receipt's seven sealed keys and nothing written beside them
+  const out = {};
+  SEALED_KEYS.forEach((k) => { if (k in r) out[k] = r[k]; });
+  return out;
 }
 function bookParts() {                           // the book as the server sent it, and what THIS DEVICE kept (never the server's list of stamps)
   return { book: { public_key: CC.public_key, head: CC.head, receipts: CC.receipts }, stamps: deviceStamps(CC.session), trusted_key: devicePinned() };
