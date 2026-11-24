@@ -16,6 +16,7 @@ import json
 
 from mcp.server.mcpserver import MCPServer
 
+from .carbon import CarbonCopy, Signer, run_event
 from .core import Receipts
 from .paypal import make_paypal
 from .scenarios import load
@@ -44,10 +45,15 @@ def workspace() -> dict:
             "expected_legit": [], "bad_outcomes": []}
 
 
-def build(register=None, on_event=None) -> tuple[MCPServer, Receipts]:
+def build(register=None, on_event=None, signer: Signer | None = None) -> tuple[MCPServer, Receipts]:
+    """The MCP server and the Receipts behind its tools. The workspace has its own carbon-copy book, signed by
+    ``signer`` (the app passes its one signer; with none, ``CARBON_COPY_KEY`` or a key made in memory), opened by a
+    sealed ``run`` receipt, so every verdict, PayPal or desk call and owner tap on an MCP hold is sealed."""
     scn = workspace()
     pp = make_paypal(scn["paypal"], scn["id"])
-    r = Receipts(scn, pp, mode="enforce", on_event=on_event)
+    carbon = CarbonCopy(signer or Signer.from_env())
+    carbon.append("run", run_event("enforce", "live", scn["id"], "mcp client", title=scn["title"]))
+    r = Receipts(scn, pp, mode="enforce", on_event=on_event, carbon=carbon)
     if register:
         register(r)
     srv = MCPServer("Receipts", instructions=(
@@ -114,10 +120,15 @@ def build(register=None, on_event=None) -> tuple[MCPServer, Receipts]:
     def receipts_holds() -> str:
         return out(r.holds)
 
+    @srv.tool(description="Carbon Copy: this workspace's receipt book (public key, signed head, every receipt). Save it and check it "
+                          "with `python -m receipts.carbon verify <file>`; it needs no secret.")
+    def carbon_book() -> str:
+        return out(r.carbon.book())
+
     return srv, r
 
 
 if __name__ == "__main__":
     # `python -m receipts.mcp_server`: serve the same tools over stdio, so a client such as Kiro can start it from its mcp.json.
     # Nothing is printed to standard output but the MCP protocol itself.
-    build()[0].run("stdio")
+    build(signer=Signer.from_env())[0].run("stdio")

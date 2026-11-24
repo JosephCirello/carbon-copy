@@ -110,3 +110,16 @@
   - [x] 14.4 Tests: endpoint, exact change, same reason, real book intact, node parity; the full run
   - [x] 14.5 README: which buttons are checked where
   - _Requirements: 14_
+
+
+- [x] 15. Every money move gets its receipt, on every path (findings F1, F2, F3, F5, F6, F13, F14)
+  - [x] 15.1 Spec first: Requirement 15, design section "Task 15", these tasks
+  - [x] 15.2 F1: the MCP workspace's own book, signed by the app's signer, the `carbon_book` tool, the same on stdio
+  - [x] 15.3 F2: MCP holds on the phone default to off; a tap seals into the MCP book
+  - [x] 15.4 F3: `book()` takes receipts and head under one lock
+  - [x] 15.5 F5: the tap is always sealed; a failed forward is shown truthfully; one lock for taps
+  - [x] 15.6 F6: a bad amount is BLOCKED; proof that no recorded verdict changes
+  - [x] 15.7 F13: one event never ends the stream
+  - [x] 15.8 F14: the cheap head on a tap
+  - [x] 15.9 README; tests in `tests/` for every fix; the full run; every `scratch_attacks/attack3_*.py` run and reported
+  - _Requirements: 15_

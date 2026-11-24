@@ -50,14 +50,19 @@ BIZ, SCENARIOS = load()
 BY_ID = {s["id"]: s for s in SCENARIOS}
 LIVE_ALLOWED = os.environ.get("RECEIPTS_LIVE", "1") == "1"      # hosted demo can turn live model runs off
 
+#: The one signing key of this process: every book it writes is signed with it, so the page can print it and a
+#: device can pin it. From CARBON_COPY_KEY when set (any text), else made in memory and flagged temporary.
+SIGNER = Signer.from_env()
+
 # Receipts as an MCP server, mounted at /mcp: a drop-in in front of PayPal's own tools. Its workspace is one
-# standing workspace shared by every MCP client, so its holds reach the web phone only where that is wanted:
-# on your own machine (the default), not on a public server (RECEIPTS_MCP_ON_PHONE=0, set in the Docker image),
-# where they would show on every visitor's phone. The receipts_holds MCP tool lists them either way.
-MCP_ON_PHONE = os.environ.get("RECEIPTS_MCP_ON_PHONE", "1") == "1"
+# standing workspace shared by every MCP client, with its own carbon-copy book signed by SIGNER (the carbon_book
+# MCP tool returns it). Its holds reach the web phone only where that is asked for: RECEIPTS_MCP_ON_PHONE=1, for a
+# single-person demo on your own machine. Off by default, because with it on anyone who can open the page can
+# approve or decline the MCP holds. The receipts_holds MCP tool lists them either way.
+MCP_ON_PHONE = os.environ.get("RECEIPTS_MCP_ON_PHONE", "0") == "1"
 MCP_SESSION: dict = {}              # {"r": Receipts} once the MCP server is built
 from receipts.mcp_server import build as build_mcp  # noqa: E402
-MCP_SERVER, MCP_RECEIPTS = build_mcp(register=lambda r: MCP_SESSION.__setitem__("r", r))
+MCP_SERVER, MCP_RECEIPTS = build_mcp(register=lambda r: MCP_SESSION.__setitem__("r", r), signer=SIGNER)
 
 
 def _warm():
@@ -104,10 +109,6 @@ class Visitor:
         self.live_ledger: list[dict] = []
         self.seen = time.time()
 
-
-#: The one signing key of this process: every book it writes is signed with it, so the page can print it and a
-#: device can pin it. From CARBON_COPY_KEY when set (any text), else made in memory and flagged temporary.
-SIGNER = Signer.from_env()
 
 VISITORS: "OrderedDict[str, Visitor]" = OrderedDict()      # least recently seen first
 _VISITORS_LOCK = threading.RLock()
@@ -249,8 +250,17 @@ def _data(ev) -> str:
     again in its safe form (see ``safe_json``) instead of breaking the stream."""
     try:
         return json.dumps(ev, default=str, allow_nan=False)
-    except ValueError:
+    except Exception:  # noqa: BLE001  NaN, a very deep argument (RecursionError), anything else: never end the stream
+        pass
+    try:
         return json.dumps(safe_json(ev))
+    except Exception:  # noqa: BLE001
+        head = ev.get("head") if isinstance(ev, dict) else None
+        try:
+            return json.dumps({"type": "unshown", "msg": "One event was too large or too deep to show here. It is in the book.",
+                               "head": safe_json(head)})
+        except Exception:  # noqa: BLE001
+            return '{"type": "unshown", "msg": "One event could not be shown here. It is in the book."}'
 
 
 def _sse(q: queue.Queue, carbon_of=None):

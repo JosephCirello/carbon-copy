@@ -315,3 +315,22 @@ The prompt says every command sets `PAYPAL_MODE=standin`, never starts the sandb
 ## Task 14: "Try to change one" is checked in the browser too
 
 `tamper_demo()` in `receipts/carbon.py` now also returns `book`, the deep copy it changed (None for an empty book); `/api/carbon/tamper` passes it through with the fields it returned before. The server's `result` stays for the command line and tests. The `#ccTamper` handler in `static/app.js` runs `t.book` through `checkOnDevice()` (the device's stamps and pinned key, the browser's SHA-256 and Ed25519) and shows `ccStamp(got.out)`, the reason and `ccWhere(got.where)`, as the forge button does; with no Ed25519 `checkOnDevice` falls back to the server as before. The changed copy keeps every old signature, so both checks stop at the same receipt with "its content was changed"; a parity test over the copy keeps it so. Nothing in `verify()` changed.
+
+
+## Task 15: every money move gets its receipt, on every path
+
+**F1, the MCP book.** `receipts.mcp_server.build(register, on_event, signer)` makes a `CarbonCopy(signer)` (the stdio start passes `Signer.from_env()`, `app.py` passes `SIGNER`, so one process has one key), seals `run_event("enforce", "live", "MCP_workspace", "mcp client")` as receipt 1, and gives the book to `Receipts(carbon=...)`. `emit()` then seals every verdict, PayPal or desk call and owner tap. The new tool `carbon_book` returns `carbon.book()` as JSON. The README shows saving that answer and running `python -m receipts.carbon check`.
+
+**F2, the phone.** `RECEIPTS_MCP_ON_PHONE` defaults to `"0"` in `app.py`. When it is `"1"` the MCP `Receipts` is listed in `_sessions()` as before; its `approve` and `decline` now seal into the MCP book and return the stamp (`_with_key` adds the public key). The README says in one line that this is for your own machine only.
+
+**F3, one lock.** `CarbonCopy.book()` copies the receipts and signs the head inside one `with self._lock`. `receipts()` also takes the lock. `head()` is the public cheap head.
+
+**F5, the tap.** Per `Receipts` object one `threading.Lock` (`_tap_lock`) guards `approve` and `decline` from the check of WAITING to the last receipt. `approve` sets the hold to APPROVED, seals `owner` / `approved`, forwards inside `try`, and seals a second `owner` receipt: `sent` with PayPal's answer (a refusal PayPal sent is an answer and is sealed as it came), or `not_sent` with the error in plain words when the forward raised. The hold's `result` carries `error` when PayPal did not take it. The answer is the result plus `stamp`, the stamp taken after the last receipt. The phone reads `result.error` and says "Approved, but PayPal did not take it: <reason>". The tamper and forge demos still act on `approved` / `declined` only.
+
+**F6, the amount.** `rules.amount_problem(x)` returns the plain reason or `None` (finite, not negative, readable). `RuleBook.check` uses it for `create_payout` and `create_refund` (a refund with no amount means the whole balance and is not checked): a bad amount gives one BLOCK finding `AMOUNT_NOT_A_NUMBER` and skips that tool's other checks, which would compare NaN or `None`. `money()` is unchanged. The proof test patches `amount_problem` to "always fine" for the old rules and re-scores every recorded run with both, comparing each verdict whole.
+
+**F13, the stream.** `_data` tries `json.dumps(ev, allow_nan=False)`, on any error `json.dumps(safe_json(ev))`, on any error a placeholder `{"type": "unshown", "msg": ...}` that keeps the event's `head` when it is plain. The ordinary form is tried first so the page keeps amounts as numbers; the cleaned form is the fallback.
+
+**F14.** `approve` and `decline` take `carbon.head()`.
+
+Tests are in `tests/test_carbon_round3.py`.

@@ -257,7 +257,8 @@ class CarbonCopy:
             return copy.deepcopy(receipt)
     def receipts(self) -> list[dict]:
         """Return deep copies of every receipt, so changing them cannot change the book."""
-        return copy.deepcopy(self._receipts)
+        with self._lock:
+            return copy.deepcopy(self._receipts)
 
     def book(self) -> dict:
         """Return the public key, a signed head and the receipts, all as copies.
@@ -273,15 +274,25 @@ class CarbonCopy:
         receipt (or the last several) has been deleted: every receipt left still
         links up. The signed head does, so the check can tell the book is short.
         """
-        receipts = self.receipts()
-        return {"public_key": self._signer.public_key_hex, "head": self._head(), "receipts": receipts}
+        with self._lock:      # the receipts and the head in ONE hold: the head counts exactly the receipts handed out
+            return {"public_key": self._signer.public_key_hex, "head": self._head_unlocked(),
+                    "receipts": copy.deepcopy(self._receipts)}
+
+    def _head_unlocked(self) -> dict:
+        """The signed head of the book as it is now. The caller holds the lock."""
+        count = len(self._receipts)
+        last_fp = self._receipts[-1]["fp"] if self._receipts else GENESIS
+        return {"count": count, "last_fp": last_fp,
+                "sig": self._signer.sign(fingerprint({"count": count, "last_fp": last_fp}))}
 
     def _head(self) -> dict:
         with self._lock:
-            count = len(self._receipts)
-            last_fp = self._receipts[-1]["fp"] if self._receipts else GENESIS
-            return {"count": count, "last_fp": last_fp,
-                    "sig": self._signer.sign(fingerprint({"count": count, "last_fp": last_fp}))}
+            return self._head_unlocked()
+
+    def head(self) -> dict:
+        """The signed head alone (``count``, ``last_fp``, ``sig``). Cheap: it does not copy the receipts, so a tap
+        can take it without slowing down as the book grows."""
+        return self._head()
 
     def stamp(self) -> dict:
         """The book's signed head together with the public key that signed it: what an owner's device keeps.

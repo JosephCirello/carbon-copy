@@ -37,6 +37,10 @@ Run the tests (no network, no keys): `.venv\Scripts\python.exe -m pytest -q`
 
 Check a downloaded book from the command line: `.venv\Scripts\python.exe -m receipts.carbon verify book.json [--stamps stamps.json]`. It exits 0 when intact, 1 when changed and 2 when the file could not be read. `--key <64 hex characters>` names the public key to trust: a book signed with any other key is changed. The file works as it is whether it is a bare book or the file *Download the carbon copies* writes: for that file the command uses the stamps and the trusted key inside it, unless you give `--stamps` or `--key`, which win.
 
+**The MCP book.** Everything an AI does through `/mcp` (or `python -m receipts.mcp_server`) gets its own book, signed by the same key as the web runs and opened by a sealed first receipt (live, model "mcp client"). The MCP tool `carbon_book` returns it: public key, signed head, every receipt. Save the answer to a file and check it with no secret: `.venv\Scripts\python.exe -m receipts.carbon verify mcp-book.json`. The book lives in the server's memory, so a restart starts a new one (download it first if you want to keep it).
+
+By default the MCP holds do not appear on the web phone. `RECEIPTS_MCP_ON_PHONE=1` puts them there, and then a tap writes the owner's receipt into the MCP book and shows its stamp. With it on, anyone who can open the page can decide the MCP holds, so it is for your own machine only.
+
 Every screen that shows a PayPal result says whether it came from the PayPal sandbox or the stand-in that mirrors PayPal's API shapes. `PAYPAL_MODE=standin` forces the stand-in (the hosted demo does this). The default, `auto`, uses the sandbox when you have sandbox keys.
 
 ## What came from Receipts and what is new

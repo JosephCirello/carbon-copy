@@ -14,6 +14,7 @@ Two modes:
 """
 from __future__ import annotations
 
+import threading
 import time
 import uuid
 
@@ -39,6 +40,7 @@ class Receipts:
         self.id_aliases: dict[str, str] = {}   # e.g. a refund id from a recorded run -> its order id
         self.report_check: dict | None = None
         self.on_event = on_event or (lambda e: None)
+        self._tap_lock = threading.Lock()    # approve and decline: one tap at a time on this run, so a hold is decided once
         self.carbon = carbon                 # a CarbonCopy: append-only, signed receipt book; None leaves Receipts unchanged
 
     def emit(self, **e):
@@ -176,29 +178,42 @@ class Receipts:
 
     # ---- the owner -----------------------------------------------------------------------
     def approve(self, hold_id: str) -> dict:
-        h = next((h for h in self.holds if h["id"] == hold_id and h["status"] == "WAITING"), None)
-        if not h:
-            return {"error": "no such waiting hold"}
-        h["status"] = "APPROVED"
-        res = self._forward(h["tool"], h["args"])
-        h["result"] = {k: res.get(k) for k in ("payout_batch_id", "batch_status", "id", "status", "error", "backend") if isinstance(res, dict) and k in res}
-        self.emit(type="owner", action="approved", hold_id=hold_id, result=_short(res))
-        if self.carbon is not None and isinstance(res, dict):
-            # the book's signed head right after this tap is recorded — handed to the owner's phone
-            res["stamp"] = self.carbon.book()["head"]
-        return res
+        """The owner's tap. It is always sealed: the owner receipt "approved" is written BEFORE the forward, then a
+        receipt with PayPal's answer, a refusal included ("sent"), or the reason nothing was sent ("not_sent"). A forward that fails leaves the
+        hold approved with the reason in its result, and the answer carries the error and the stamp, never an exception."""
+        with self._tap_lock:
+            h = next((h for h in self.holds if h["id"] == hold_id and h["status"] == "WAITING"), None)
+            if not h:
+                return {"error": "no such waiting hold"}
+            h["status"] = "APPROVED"
+            self.emit(type="owner", action="approved", hold_id=hold_id)
+            raised = False
+            try:
+                res = self._forward(h["tool"], h["args"])
+            except Exception as e:  # noqa: BLE001  whatever went wrong, the tap keeps its receipt
+                raised, res = True, {"error": _plain_error(e)}
+            if not isinstance(res, dict):
+                res = {"result": res}
+            h["result"] = {k: res.get(k) for k in ("payout_batch_id", "batch_status", "id", "status", "error", "backend") if k in res}
+            if raised:        # PayPal gave no answer at all: say why. An answer, even a refusal, is sealed as it came.
+                self.emit(type="owner", action="not_sent", hold_id=hold_id, error=res["error"])
+            else:
+                self.emit(type="owner", action="sent", hold_id=hold_id, result=_short(res))
+            if self.carbon is not None:
+                res["stamp"] = self.carbon.head()      # the book's signed head right after this tap, for the owner's phone
+            return res
 
     def decline(self, hold_id: str) -> dict:
-        h = next((h for h in self.holds if h["id"] == hold_id and h["status"] == "WAITING"), None)
-        if not h:
-            return {"error": "no such waiting hold"}
-        h["status"] = "DECLINED"
-        self.emit(type="owner", action="declined", hold_id=hold_id)
-        out = {"declined": hold_id}
-        if self.carbon is not None:
-            out["stamp"] = self.carbon.book()["head"]   # the book's signed head right after this tap
-        return out
-
+        with self._tap_lock:
+            h = next((h for h in self.holds if h["id"] == hold_id and h["status"] == "WAITING"), None)
+            if not h:
+                return {"error": "no such waiting hold"}
+            h["status"] = "DECLINED"
+            self.emit(type="owner", action="declined", hold_id=hold_id)
+            out = {"declined": hold_id}
+            if self.carbon is not None:
+                out["stamp"] = self.carbon.head()      # the book's signed head right after this tap
+            return out
     # ---- the report against PayPal ------------------------------------------------------------
     def _ids_in(self, xs) -> set[str]:
         """Pull the identifiers out of whatever the agent wrote: 'INV-HF-0915 - Hollis ($298)',
@@ -361,3 +376,9 @@ def _matches_call(e: dict, v: dict) -> bool:
 def _short(x, n=1200):
     s = str(x)
     return x if len(s) <= n else s[:n] + "…"
+
+
+def _plain_error(e: BaseException) -> str:
+    """What went wrong, in a short plain line for the owner's phone and the book (no traceback, no secrets)."""
+    text = " ".join(str(e).split())
+    return (text or type(e).__name__)[:200]

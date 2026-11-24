@@ -413,7 +413,7 @@ function holdTitle(h) {
 function holdCard(h) {
   return `<div class="hold"><div class="nt"><span>CARBON COPY</span><span class="when">${h.status === "WAITING" ? "needs you" : "done"}</span></div><div class="ttl">${esc(holdTitle(h))} · ${esc(h.scenario)}</div><div class="amt">${usd(h.amount)}</div><ul>${(h.why || []).map((w) => `<li>${esc(plain(w))}</li>`).join("")}</ul>${h.status === "WAITING"
     ? `<div class="btns"><button class="approve" data-s="${h.session}" data-h="${h.id}">Approve</button><button class="decline" data-s="${h.session}" data-h="${h.id}">Decline</button></div>`
-    : `<div class="state ${h.status}">${h.status === "APPROVED" ? `Approved · sent to PayPal ${esc((h.result || {}).backend || "")} · ${esc((h.result || {}).payout_batch_id || (h.result || {}).id || "")} · ${esc((h.result || {}).batch_status || (h.result || {}).status || "")}` : "Declined · never sent to PayPal"}</div>`}${PHONE_STAMPS[holdKey(h)] != null ? `<p class="phone-stamp">Your phone kept stamp #${PHONE_STAMPS[holdKey(h)]}: the book had ${PHONE_STAMPS[holdKey(h)]} receipts.</p>` : ""}</div>`;
+    : `<div class="state ${h.status}">${h.status === "APPROVED" && (h.result || {}).error ? `Approved, but PayPal did not take it: ${esc(typeof h.result.error === "string" ? h.result.error : ((h.result.error || {}).message || (h.result.error || {}).name || "PayPal refused it"))}` : h.status === "APPROVED" ? `Approved · sent to PayPal ${esc((h.result || {}).backend || "")} · ${esc((h.result || {}).payout_batch_id || (h.result || {}).id || "")} · ${esc((h.result || {}).batch_status || (h.result || {}).status || "")}` : "Declined · never sent to PayPal"}</div>`}${PHONE_STAMPS[holdKey(h)] != null ? `<p class="phone-stamp">Your phone kept stamp #${PHONE_STAMPS[holdKey(h)]}: the book had ${PHONE_STAMPS[holdKey(h)]} receipts.</p>` : ""}</div>`;
 }
 function expiredCard(h) {
   return `<div class="hold expired" role="status"><div class="nt"><span>CARBON COPY</span><span class="when">expired</span></div><div class="ttl">${esc(holdTitle(h))} · ${esc(h.scenario)}</div><div class="amt">${usd(h.amount)}</div><p class="gone">${EXPIRED_TEXT}</p><button class="to-watch">Back to Watch</button></div>`;
@@ -523,7 +523,10 @@ function ccSentence(r) {                         // one plain sentence for one r
       const rp = e.report || {}, n = (k) => (Array.isArray(rp[k]) ? rp[k].length : 0);
       return `The AI's end-of-day report: ${n("paid_invoices")} paid, ${n("held")} held, ${n("refunded_orders")} refunded, ${n("accepted_disputes")} disputes given in on.`;
     }
-    case "owner": return e.action === "approved" ? (refusal(e.result) ? `Maya approved a held payment. ${refusal(e.result)}` : "Maya approved a held payment. It went to PayPal.") : e.action === "declined" ? "Maya declined a held payment. It never went to PayPal." : "Maya acted on a held payment.";
+    case "owner": if (e.action === "approved" && !e.result) return "Maya approved a held payment.";
+      if (e.action === "sent") return refusal(e.result) ? `The approved payment did not go through. ${refusal(e.result)}` : "The approved payment went to PayPal.";
+      if (e.action === "not_sent") return `The approved payment did not go to PayPal: ${esc0(clip(e.error, 200))}`;
+      return e.action === "approved" ? (refusal(e.result) ? `Maya approved a held payment. ${refusal(e.result)}` : "Maya approved a held payment. It went to PayPal.") : e.action === "declined" ? "Maya declined a held payment. It never went to PayPal." : "Maya acted on a held payment.";
     default: return `Something happened: ${esc0(r.kind)}.`;
   }
 }

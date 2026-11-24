@@ -12,6 +12,7 @@ looked up, so the owner can see exactly what it saw.
 """
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass, field
 
@@ -48,6 +49,15 @@ def money(x) -> float | None:
         return round(float(str(x).replace("$", "").replace(",", "")), 2)
     except (TypeError, ValueError):
         return None
+
+
+def amount_problem(x) -> str | None:
+    """Why an amount cannot be paid or refunded, in plain words, or None when it is a finite, non-negative number
+    of dollars. NaN and infinity make every limit comparison false, so they must never reach the limits."""
+    a = money(x)
+    if a is None or not math.isfinite(a) or a < 0:
+        return "the amount is not a number of dollars"
+    return None
 
 
 PAID = {"SUCCESS"}
@@ -132,7 +142,12 @@ class RuleBook:
     # ---- the checks -------------------------------------------------------------------------
     def check(self, tool: str, args: dict, claimed_check: str | None, claimed_approval: str | None = None) -> list[Finding]:
         f: list[Finding] = []
-        if tool == "create_payout":
+        bad = amount_problem(args.get("amount")) if tool == "create_payout" or (tool == "create_refund" and args.get("amount") not in (None, "")) else None
+        if bad:
+            # NaN, infinity, a negative or unreadable text would slip past every limit below: stop it here
+            f.append(Finding("AMOUNT_NOT_A_NUMBER", "BLOCK", f"The amount asked for ({args.get('amount')!r}) cannot be paid: {bad}.",
+                             {"amount": str(args.get("amount"))}))
+        elif tool == "create_payout":
             f += self._payout(args)
         elif tool == "update_vendor_payee":
             f += self._payee_change(args)
