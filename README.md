@@ -1,6 +1,6 @@
 # Carbon Copy
 
-Category: (to be confirmed)
+**Kiroween 2026 · Resurrection.** The carbon-copy receipt book, the duplicate pad every shop and office used for a century and then threw away, brought back from the dead for the AI that now pays the bills: every move it makes is copied at the moment it happens, and changing a copy afterwards always shows.
 
 Maya runs a nine-person furniture workshop. Her AI agent pays supplier bills through PayPal. One morning it tries to pay the same $1,836.00 bill to Blue Ridge Finishes twice. The check stops the second payment and asks Maya. She declines it.
 

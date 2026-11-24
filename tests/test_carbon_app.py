@@ -418,7 +418,7 @@ def test_the_mcp_server_starts_over_stdio_and_lists_its_tools():
 
 
 def test_readme_is_in_line_with_task_10():
-    assert "Category:" in README and "Session records:** [docs/kiro-sessions/](docs/kiro-sessions/README.md)" in README
+    assert "Kiroween 2026 · Resurrection" in README and "Session records:** [docs/kiro-sessions/](docs/kiro-sessions/README.md)" in README
     assert (ROOT / "docs" / "kiro-sessions" / "README.md").exists()
     assert "always-on plan" in README and "free plan" not in README
     assert "after each save" in README and "tasks 1 to 13" in README.lower()
