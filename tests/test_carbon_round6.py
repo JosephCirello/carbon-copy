@@ -21,6 +21,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey 
 from receipts import mcp_server, rules  # noqa: E402
 from receipts.carbon import WHY_BIG_NUMBER, CarbonCopy, Signer, load_json_text, verify  # noqa: E402
 from tests.test_carbon_round4 import HOSTED, NODE, cli, download, needs_node, run_page, small_book  # noqa: E402
+from tests.readme_counts import assert_readme_counts_match  # noqa: E402
 from tests.test_carbon_round5 import call, run  # noqa: E402
 
 README = (ROOT / "README.md").read_text(encoding="utf-8")
@@ -671,12 +672,13 @@ def test_the_spec_has_requirement_19_task_21_and_the_readme_counts_are_true():
     spec = ROOT / ".kiro" / "specs" / "carbon-copy"
     reqs = (spec / "requirements.md").read_text(encoding="utf-8")
     assert "### Requirement 19: the fourth attacker round's twelve findings" in reqs
-    assert len(re.findall(r"^### Requirement \d+", reqs, re.M)) == 19
     assert "## Task 21: the fourth attacker round's twelve findings" in (spec / "design.md").read_text(encoding="utf-8")
     tasks = (spec / "tasks.md").read_text(encoding="utf-8")
     assert "- [x] 21. The fourth attacker round's twelve findings" in tasks
-    assert len(re.findall(r"^- \[[x ]\] \d+\. ", tasks, re.M)) == 22          # task 22 added the 22nd task
-    assert "(19 requirements)" in README and "tasks 1 to 22" in README and "seventeen times" in README
+    assert_readme_counts_match(README)       # the README's runs, tasks and requirements equal what the repository holds
+    assert "seventeen times" in README
     assert re.search(r"^17\. \*\*The fourth attacker run's twelve findings\.\*\*", README, re.M)
-    assert "fourth run twelve" in README and "not in the session records yet" in README
-    assert "(21 runs:" in README                       # no record of the fourth run was invented
+    assert "fourth run twelve" in README and "not in the session records yet" not in README
+    assert "(the fourth run's record is `23_` in the session records)" in README
+    sessions = ROOT / "docs" / "kiro-sessions"
+    assert (sessions / "23_agent_carbon_attacker_fourth_run.md").exists()

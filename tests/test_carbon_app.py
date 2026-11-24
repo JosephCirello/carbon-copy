@@ -307,6 +307,8 @@ import re  # noqa: E402
 import shutil  # noqa: E402
 import subprocess  # noqa: E402
 
+from tests.readme_counts import assert_readme_counts_match  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
 HTML = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
 JS = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
@@ -423,7 +425,7 @@ def test_readme_is_in_line_with_task_10():
     assert "Kiroween 2026 · Resurrection" in README and "Session records:** [docs/kiro-sessions/](docs/kiro-sessions/README.md)" in README
     assert (ROOT / "docs" / "kiro-sessions" / "README.md").exists()
     assert "always-on plan" in README and "free plan" not in README
-    assert "after each save" in README and "tasks 1 to 22" in README.lower()
+    assert "after each save" in README and "tasks 1 to " in README.lower()
     section = README[README.index("## How Kiro built it"):README.index("## Limits we know about")]
     for word in ("Kiro CLI, headless", "Spec-driven", "Steering", "Hooks", "Property-based", "MCP", "Custom agent", "Powers", "None were used"):
         assert word in section, word
@@ -556,7 +558,8 @@ def test_spec_carries_requirement_11_and_task_11():
 
 def test_readme_is_in_line_with_task_11():
     assert "Amounts that are not whole numbers are sealed as text, so the book shows the value, not whether the AI wrote it as a number or as text." in README
-    assert "tasks 1 to 22" in README and "(19 requirements)" in README and "seventeen times" in README and "sixteen times" not in README and "eight times" not in README
+    assert_readme_counts_match(README)
+    assert "seventeen times" in README and "sixteen times" not in README and "eight times" not in README
     section = README[README.index("## How Kiro built it"):README.index("## Limits we know about")]
     assert "kiro-cli mcp list" in section and "Mode 'carbon-attacker' not found" in section
     assert "aren't available to me" in section

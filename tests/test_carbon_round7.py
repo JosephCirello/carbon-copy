@@ -23,6 +23,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey 
 
 from receipts import mcp_server  # noqa: E402
 from receipts.carbon import Signer  # noqa: E402
+from tests.readme_counts import assert_readme_counts_match  # noqa: E402
 
 README = (ROOT / "README.md").read_text(encoding="utf-8")
 PAY = dict(vendor="Ashwood Timber Co.", receiver_email="billing@ashwoodtimberco.com", memo="task 22")
@@ -337,12 +338,12 @@ def test_a_tap_made_while_the_same_thread_holds_the_runs_lock_does_not_deadlock(
 def test_the_readme_no_longer_names_the_gap_and_the_counts_are_true():
     spec = ROOT / ".kiro" / "specs" / "carbon-copy"
     reqs = (spec / "requirements.md").read_text(encoding="utf-8")
-    assert len(re.findall(r"^### Requirement \d+", reqs, re.M)) == 19              # amended, not a new requirement
+    assert "### Requirement 19" in reqs                                            # amended, not a new requirement
     assert "amended by task 22" in reqs and "THE INSTANT BETWEEN THE TAP'S LOOK AND ITS SEND IS CLOSED" in reqs
     assert "## Task 22:" in (spec / "design.md").read_text(encoding="utf-8")
     tasks = (spec / "tasks.md").read_text(encoding="utf-8")
-    assert len(re.findall(r"^- \[[x ]\] \d+\. ", tasks, re.M)) == 22
+    assert "- [x] 22. " in tasks
     assert "in the instant between that look and the send is not seen" not in README
     assert "not atomically" not in README
-    assert "tasks 1 to 22" in README and "seventeen times" in README
-    assert "(19 requirements)" in README
+    assert "seventeen times" in README
+    assert_readme_counts_match(README)

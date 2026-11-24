@@ -179,3 +179,14 @@
   - [x] 22.3 One per-run lock (un_lock) for the agent's check plus forward in Receipts.call and the owner's re-check plus forward in pprove; the same lock covers MCP tool calls and phone taps on MCP holds
   - [x] 22.4 README: Limits line removed, counts; tests in 	ests/test_carbon_round7.py; both runs; ttack4_visitor_cookie.py and ttack4_tap.py run and reported
   - _Requirements: 19_
+
+- [x] 23. One README test pinned a sentence that is no longer true (the fourth run's record is now in the session records)
+  - [x] 23.1 `test_the_spec_has_requirement_19_task_21_and_the_readme_counts_are_true` now pins the README's words: "the fourth run's record is `23_` in the session records" and "26 runs", and asserts `docs/kiro-sessions/23_agent_carbon_attacker_fourth_run.md` exists
+  - [x] 23.2 A test checks the numbered files in `docs/kiro-sessions/` match the README's "26 runs"; no other file changed
+  - _Requirements: 6 (the README kept true; no new requirement)_
+
+- [x] 24. Count tests that compare, not pin (Requirement 6's README kept true; no new requirement)
+  - [x] 24.1 `tests/readme_counts.py` reads the README's "(N runs:", "tasks 1 to N" and "(N requirements)" and compares them with the numbered files in `docs/kiro-sessions/`, the tasks in `tasks.md` and the `### Requirement` headings
+  - [x] 24.2 The tests in `tests/test_carbon_round6.py`, `tests/test_carbon_round7.py` and `tests/test_carbon_app.py` that pinned "26 runs", "tasks 1 to 22", "(19 requirements)" or the task count now use it; the checks that specific sentences and files exist stay
+  - [x] 24.3 Proved in a scratch copy: with the README's numbers set for one more record and one more task the tests pass, and with a wrong number they fail; no README or non-test file changed
+  - _Requirements: 6 (the README kept true; no new requirement)_
