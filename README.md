@@ -9,7 +9,7 @@
 - **What it is:** a carbon-copy receipt book for the AI that pays a small business's bills through PayPal. Every move it makes is copied and signed the moment it happens, so a changed copy always shows.
 - **Three clicks on the live demo** (https://carbon-copy-ywv3.onrender.com): *Run Maya's day*, then *Decline the double payment on her phone*, then *Try to forge the record*.
 - **Three numbers:** 4 rounds of attacks by Kiro's own `carbon-attacker` agent; 38 weak spots it proved (6 + 7 + 13 + 12), each fixed or written down as a limit; 45,571 receipts from recorded AI runs changed one at a time, and every change was caught at the right receipt.
-- **Links:** [live demo](https://carbon-copy-ywv3.onrender.com) · Video: (link added at submission)
+- **Links:** [live demo](https://carbon-copy-ywv3.onrender.com) · [Video](https://youtu.be/4WLuuWS7IYw)
 
 ### At a glance
 
